@@ -57,6 +57,17 @@ export declare class DshAntigravityService {
      */
     prompt(sessionId: string, text: string): Promise<any>;
     /**
+     * Cancels active prompt in session.
+     */
+    cancel(sessionId: string): Promise<void>;
+    /**
+     * Streams prompt response as real-time chunks conforming to DSH StreamChunk.
+     */
+    streamPrompt(text: string, options?: {
+        signal?: AbortSignal;
+        cwd?: string;
+    }): AsyncIterable<any>;
+    /**
      * Quick completion test helper for DSH UI / card test
      */
     testPrompt(text: string, cwd?: string): Promise<string>;

@@ -130,61 +130,127 @@ export class DshAntigravityService {
         return await this.client.prompt(sessionId, text);
     }
     /**
-     * Quick completion test helper for DSH UI / card test
+     * Cancels active prompt in session.
      */
-    async testPrompt(text, cwd = process.cwd()) {
-        const session = await this.createSession(cwd);
-        const collectedTexts = [];
-        const listenerKey = `test-${Date.now()}`;
+    async cancel(sessionId) {
+        if (this.client) {
+            await this.client.cancel(sessionId);
+        }
+    }
+    /**
+     * Streams prompt response as real-time chunks conforming to DSH StreamChunk.
+     */
+    async *streamPrompt(text, options) {
+        if (!this.isLoggedIn()) {
+            throw new Error("请先在「设置 -> 插件 -> Google Antigravity」完成 Google 账号登录授权。");
+        }
+        const session = await this.createSession(options?.cwd || process.cwd());
+        const listenerKey = `stream-${Date.now()}-${Math.random()}`;
+        const queue = [];
+        let resolver = null;
+        const push = (item) => {
+            if (resolver) {
+                const r = resolver;
+                resolver = null;
+                r(item);
+            }
+            else {
+                queue.push(item);
+            }
+        };
+        const nextItem = () => {
+            if (queue.length > 0) {
+                return Promise.resolve(queue.shift());
+            }
+            return new Promise((resolve) => {
+                resolver = resolve;
+            });
+        };
         this.notificationListeners.set(listenerKey, (notice) => {
             const update = notice?.update;
             if (!update)
                 return;
-            // Extract text content from various ACP chunk shapes
-            if (typeof update === "string") {
-                collectedTexts.push(update);
+            if (update.sessionUpdate === "agent_thought_chunk") {
+                const thought = update.content?.text || (typeof update.content === "string" ? update.content : "");
+                if (thought) {
+                    push({ chunk: { type: "reasoning-delta", index: 0, text: thought } });
+                }
             }
             else if (update.sessionUpdate === "agent_message_chunk") {
-                if (typeof update.content === "string") {
-                    collectedTexts.push(update.content);
+                const msg = update.content?.text || (typeof update.content === "string" ? update.content : "");
+                if (msg) {
+                    push({ chunk: { type: "text-delta", index: 1, text: msg } });
                 }
-                else if (update.content?.text) {
-                    collectedTexts.push(update.content.text);
-                }
-            }
-            else if (update.sessionUpdate === "agent_thought_chunk") {
-                const thought = update.content?.text || (typeof update.content === "string" ? update.content : "");
-                if (thought)
-                    collectedTexts.push(`[思考中] ${thought}\n`);
             }
             else if (update.agent_output_chunk?.content) {
-                collectedTexts.push(update.agent_output_chunk.content);
+                push({ chunk: { type: "text-delta", index: 1, text: update.agent_output_chunk.content } });
+            }
+            else if (typeof update === "string") {
+                push({ chunk: { type: "text-delta", index: 1, text: update } });
             }
             else if (update.content) {
                 if (typeof update.content === "string") {
-                    collectedTexts.push(update.content);
+                    push({ chunk: { type: "text-delta", index: 1, text: update.content } });
                 }
                 else if (update.content?.text) {
-                    collectedTexts.push(update.content.text);
+                    push({ chunk: { type: "text-delta", index: 1, text: update.content.text } });
                 }
                 else if (Array.isArray(update.content)) {
                     for (const item of update.content) {
-                        if (item?.type === "text" && item.text)
-                            collectedTexts.push(item.text);
+                        if (item?.type === "text" && item.text) {
+                            push({ chunk: { type: "text-delta", index: 1, text: item.text } });
+                        }
                     }
                 }
             }
         });
+        const abortHandler = () => {
+            this.cancel(session.sessionId).catch(() => { });
+            push({ done: true });
+        };
+        options?.signal?.addEventListener("abort", abortHandler, { once: true });
+        // Execute prompt asynchronously
+        this.prompt(session.sessionId, text)
+            .then(() => {
+            push({ chunk: { type: "finish", reason: "stop" } });
+            push({ done: true });
+        })
+            .catch((err) => {
+            push({ error: err });
+        });
         try {
-            const result = await this.prompt(session.sessionId, text);
-            if (collectedTexts.length > 0) {
-                return collectedTexts.join("");
+            while (true) {
+                const item = await nextItem();
+                if (item.error) {
+                    throw item.error;
+                }
+                if (item.done) {
+                    break;
+                }
+                if (item.chunk) {
+                    yield item.chunk;
+                }
             }
-            return JSON.stringify(result, null, 2);
         }
         finally {
             this.notificationListeners.delete(listenerKey);
+            options?.signal?.removeEventListener("abort", abortHandler);
         }
+    }
+    /**
+     * Quick completion test helper for DSH UI / card test
+     */
+    async testPrompt(text, cwd = process.cwd()) {
+        const collectedTexts = [];
+        for await (const chunk of this.streamPrompt(text, { cwd })) {
+            if (chunk.type === "reasoning-delta") {
+                collectedTexts.push(`[思考中] ${chunk.text}\n`);
+            }
+            else if (chunk.type === "text-delta") {
+                collectedTexts.push(chunk.text);
+            }
+        }
+        return collectedTexts.join("") || "（模型无文本输出）";
     }
     /**
      * Shuts down service.
@@ -286,8 +352,8 @@ export function apply(ctx, config = {}) {
             }
         });
     }
-    // 3. Optional LLM Adapter registration:
-    // Exposes Google Antigravity (Gemini 3.8 Flash / 3.1 Pro) in DSH model selection
+    // 3. LLM Adapter registration:
+    // Exposes Google Antigravity (Gemini 3.8 Flash) into DSH chat window
     if (typeof ctx.inject === "function") {
         ctx.inject(["llm"], (scope) => {
             try {
@@ -301,34 +367,54 @@ export function apply(ctx, config = {}) {
                         providerRetryPolicy() {
                             return undefined;
                         },
-                        listModels() {
-                            return Promise.resolve([
+                        imageRequestPricing() {
+                            return undefined;
+                        },
+                        async listModels(provider) {
+                            // 关键逻辑：未登录 Google 账号前，模型列表返回空，不在聊天窗口暴露
+                            if (!service.isLoggedIn()) {
+                                return [];
+                            }
+                            return [
                                 {
                                     id: "gemini-3.8-flash",
                                     name: "Gemini 3.8 Flash (Antigravity)",
                                     description: "Google Gemini 3.8 Flash Agent model",
-                                    provider: providerId,
+                                    provider,
                                     inputModalities: ["text"],
                                 },
-                                {
-                                    id: "gemini-3.1-pro",
-                                    name: "Gemini 3.1 Pro (Antigravity)",
-                                    description: "Google Gemini 3.1 Pro Agent model",
-                                    provider: providerId,
-                                    inputModalities: ["text"],
-                                },
-                            ]);
+                            ];
                         },
                         resolveModel(provider, model) {
                             return Promise.resolve({
-                                id: model,
-                                name: model.includes("pro") ? "Gemini 3.1 Pro (Antigravity)" : "Gemini 3.8 Flash (Antigravity)",
+                                id: "gemini-3.8-flash",
+                                name: "Gemini 3.8 Flash (Antigravity)",
+                                description: "Google Gemini 3.8 Flash Agent model",
                                 provider,
                                 inputModalities: ["text"],
+                                context: {
+                                    contextWindow: 1_000_000,
+                                    maxTokens: 65_536,
+                                },
+                                reasoning: {
+                                    efforts: [
+                                        { id: "low", name: "Low" },
+                                        { id: "medium", name: "Medium" },
+                                        { id: "high", name: "High" },
+                                    ],
+                                    defaultEffort: "high",
+                                },
                             });
                         },
-                        async *stream(options) {
-                            // Extract the user prompt from messages
+                        async prepareCall(provider, model, signal) {
+                            const resolved = await this.resolveModel(provider, model, signal);
+                            const self = this;
+                            return {
+                                model: resolved,
+                                stream: (options) => self.stream(options),
+                            };
+                        },
+                        stream(options) {
                             const messages = options.messages || [];
                             const lastMsg = messages[messages.length - 1];
                             let text = "";
@@ -336,10 +422,11 @@ export function apply(ctx, config = {}) {
                                 text = lastMsg.content;
                             }
                             else if (Array.isArray(lastMsg?.content)) {
-                                text = lastMsg.content.map((c) => c.text || "").join("\n");
+                                text = lastMsg.content
+                                    .map((c) => (typeof c === "string" ? c : c.text || ""))
+                                    .join("\n");
                             }
-                            const output = await service.testPrompt(text || "Hello");
-                            yield { type: "text", text: output };
+                            return service.streamPrompt(text || "Hello", { signal: options.signal });
                         },
                     });
                 }
