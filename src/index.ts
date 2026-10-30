@@ -16,6 +16,8 @@ export * from "./acp-client.js";
 export class DshAntigravityService {
   private client: AntigravityAcpClient | null = null;
   private projectRoot: string;
+  private isInitializing = false;
+  private initError: string | null = null;
 
   constructor(private readonly config: AntigravityPluginConfig = {}) {
     this.projectRoot = path.resolve(import.meta.dirname, "..");
@@ -27,23 +29,51 @@ export class DshAntigravityService {
    * 2. Starts the server process and performs ACP handshake.
    */
   async initialize(onProgress?: (msg: string, percent?: number) => void): Promise<void> {
-    const runtime = await ensureAntigravityServer(this.projectRoot, onProgress);
+    if (this.client) return;
+    if (this.isInitializing) return;
 
-    this.client = new AntigravityAcpClient(runtime.serverPath, runtime.args, {
-      onNotification: (notice) => {
-        // Broadcast updates to DSH message queue / UI
-      },
-      onRequestPermission: async (req) => {
-        // If mode is yolo, grant immediately by selecting the grant option
-        const allowOption = req.options?.find((opt) => opt.optionId.includes("allow") || opt.optionId.includes("yes")) || req.options?.[0];
-        if (allowOption) {
-          return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
-        }
-        return { outcome: { outcome: "cancelled" } };
-      },
-    });
+    this.isInitializing = true;
+    this.initError = null;
 
-    await this.client.start();
+    try {
+      const runtime = await ensureAntigravityServer(this.projectRoot, onProgress);
+
+      this.client = new AntigravityAcpClient(runtime.serverPath, runtime.args, {
+        onNotification: (notice) => {
+          // Broadcast updates
+        },
+        onRequestPermission: async (req) => {
+          const allowOption =
+            req.options?.find((opt) => opt.optionId.includes("allow") || opt.optionId.includes("yes")) ||
+            req.options?.[0];
+          if (allowOption) {
+            return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
+          }
+          return { outcome: { outcome: "cancelled" } };
+        },
+      });
+
+      await this.client.start();
+    } catch (err: any) {
+      this.initError = err?.message || String(err);
+      throw err;
+    } finally {
+      this.isInitializing = false;
+    }
+  }
+
+  /**
+   * Status information queryable by DSH UI
+   */
+  getStatus() {
+    return {
+      initialized: Boolean(this.client),
+      isInitializing: this.isInitializing,
+      isLoggedIn: this.isLoggedIn(),
+      error: this.initError,
+      defaultModel: this.config.defaultModel || "gemini-3.8-flash",
+      permissionMode: this.config.permissionMode || "yolo",
+    };
   }
 
   /**
@@ -58,9 +88,11 @@ export class DshAntigravityService {
    */
   async login(): Promise<void> {
     if (!this.client) {
-      throw new Error("Antigravity service is not initialized yet. Call initialize() first.");
+      await this.initialize();
     }
-    await this.client.authenticate();
+    if (this.client) {
+      await this.client.authenticate();
+    }
   }
 
   /**
@@ -75,8 +107,9 @@ export class DshAntigravityService {
    */
   async createSession(cwd: string) {
     if (!this.client) {
-      throw new Error("Antigravity service is not initialized.");
+      await this.initialize();
     }
+    if (!this.client) throw new Error("Failed to initialize Antigravity client");
     return await this.client.createSession(cwd, {
       permissionMode: this.config.permissionMode || "yolo",
       model: this.config.defaultModel || "gemini-3.8-flash",
@@ -88,8 +121,20 @@ export class DshAntigravityService {
    * Sends prompt to session.
    */
   async prompt(sessionId: string, text: string) {
-    if (!this.client) throw new Error("Antigravity service is not initialized.");
+    if (!this.client) {
+      await this.initialize();
+    }
+    if (!this.client) throw new Error("Failed to initialize Antigravity client");
     return await this.client.prompt(sessionId, text);
+  }
+
+  /**
+   * Quick completion test helper for DSH UI / chat
+   */
+  async testPrompt(text: string, cwd: string = process.cwd()): Promise<string> {
+    const session = await this.createSession(cwd);
+    const result = await this.prompt(session.sessionId, text);
+    return JSON.stringify(result, null, 2);
   }
 
   /**
@@ -111,6 +156,32 @@ export function apply(ctx: any, config: AntigravityPluginConfig) {
 
   // Expose service into DSH Context
   ctx.provide("antigravityAcp", service);
+
+  // Register remote RPC endpoints for DSH Client/UI
+  if (ctx.api) {
+    ctx.api.handle("antigravity/status", async () => {
+      return service.getStatus();
+    });
+
+    ctx.api.handle("antigravity/login", async () => {
+      await service.login();
+      return service.getStatus();
+    });
+
+    ctx.api.handle("antigravity/logout", async () => {
+      service.logout();
+      return service.getStatus();
+    });
+
+    ctx.api.handle("antigravity/init", async () => {
+      await service.initialize();
+      return service.getStatus();
+    });
+
+    ctx.api.handle("antigravity/testPrompt", async ({ text }: { text: string }) => {
+      return await service.testPrompt(text);
+    });
+  }
 
   ctx.on("dispose", async () => {
     await service.dispose();
