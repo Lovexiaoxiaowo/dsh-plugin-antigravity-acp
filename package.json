@@ -22,9 +22,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "watch": "tsc -w",
-    "prepare": "tsc",
-    "prepublishOnly": "npm run build"
+    "watch": "tsc -w"
   },
   "keywords": [
     "dsh-plugin",
