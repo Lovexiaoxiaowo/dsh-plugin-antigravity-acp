@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.9-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.10-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,17 @@
 ---
 
 ## 版本更新日志 (Changelog)
+
+### v1.0.10 (2026-10-30)
+- **新增周额度结算时间与倒计时看板**：
+  - 后端实现 Google 官方自然周结算点（每周一 00:00 UTC / 北京时间周一 08:00）精准算法，输出自然周重置倒计时（`X天X小时X分`）；
+  - 额度 Popover 浮层升级为「5小时滑动速率窗口」与「自然周额度重置」双重周期看板。
+- **全状态常驻双 Slot 挂载（解决额度面板被隐藏问题）**：
+  - 除了输入框右侧（`conversation.input.right`）外，同时挂载到 DSH 底栏状态条（`conversation.composer.dock`）；
+  - 彻底解决任务运行/深度求索期间（`activity === true`）输入框控制组被 DSH `hidden: activity` 隐藏导致胶囊不可见的问题，全生命周期常驻可见。
+- **方案 A 结构化思维链与防 Token 爆炸护甲**：
+  - 优化 Antigravity 自治 Agent 的工具调度、参数摘要与代码 diff 的卡片式结构化输出；
+  - 增设工具超长输出熔断保护（单工具最大 1,200 字符限制），自动截断冗余文本，杜绝巨量长命令输出打爆会话 Token 与 API 网关长连接。
 
 ### v1.0.9 (2026-10-30)
 - **修复工具调用导致的 `unknown tool` 异常与报告消失**：

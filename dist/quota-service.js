@@ -69,6 +69,24 @@ export class AntigravityQuotaService {
         const pad = (n) => n.toString().padStart(2, "0");
         return `${pad(hours)}:${pad(mins)}:${pad(secs)}`;
     }
+    getWeeklyResetInfo() {
+        const now = new Date();
+        // Google Cloud / Antigravity 官方自然周结算点：每周一 00:00:00 UTC (北京时间周一 08:00)
+        const nextMonday = new Date(now.getTime());
+        const currentDay = nextMonday.getUTCDay(); // 0 is Sunday, 1 is Monday...
+        const daysUntilMonday = (8 - currentDay) % 7 || 7;
+        nextMonday.setUTCDate(nextMonday.getUTCDate() + daysUntilMonday);
+        nextMonday.setUTCHours(0, 0, 0, 0);
+        const diff = nextMonday.getTime() - now.getTime();
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        return {
+            weeklyResetTime: nextMonday.toISOString(),
+            weeklyResetCountdown: `${days}天${hours}小时${mins}分`,
+            weeklyResetLabel: "每周一 08:00 (UTC+8)",
+        };
+    }
     async getSnapshot(sessionId, modelId = "gemini-3.8-flash") {
         await this.fetchUpstreamData();
         // Look for matching model quota or fallback to closest flash model
@@ -105,6 +123,7 @@ export class AntigravityQuotaService {
         const tierName = this.cachedTierData?.paidTier?.name ||
             this.cachedTierData?.currentTier?.name ||
             "Google AI";
+        const weeklyInfo = this.getWeeklyResetInfo();
         const quotaSummary = {
             model: modelId,
             displayName: modelEntry?.displayName || "Gemini 3.8 Flash (Antigravity)",
@@ -112,6 +131,9 @@ export class AntigravityQuotaService {
             remainingPercent: `${(fraction * 100).toFixed(1)}%`,
             resetTime,
             resetCountdown: this.formatCountdown(resetTime),
+            weeklyResetTime: weeklyInfo.weeklyResetTime,
+            weeklyResetCountdown: weeklyInfo.weeklyResetCountdown,
+            weeklyResetLabel: weeklyInfo.weeklyResetLabel,
             tier: tierName,
             maxTokens: maxContextTokens,
         };

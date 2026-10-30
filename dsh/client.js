@@ -422,8 +422,17 @@ window.__ModuleLoader__.load({
           fetch(url)
             .then((r) => r.json())
             .then((data) => setSnapshot(data))
-            .catch(() => {})
+            .catch((e) => console.warn('[antigravity-acp] quota fetch warning:', e))
         }, [sessionId])
+
+        var handleMouseEnter = react.useCallback(() => {
+          fetchQuota()
+          setShowPopover(true)
+        }, [fetchQuota])
+
+        var handleMouseLeave = react.useCallback(() => {
+          setShowPopover(false)
+        }, [])
 
         react.useEffect(() => {
           fetchQuota()
@@ -606,7 +615,7 @@ window.__ModuleLoader__.load({
                     )
                   : null
               ),
-              // Quota Rolling Mechanism explanation card
+              // Quota Rolling & Weekly Reset explanation card
               h(
                 'div',
                 {
@@ -622,14 +631,23 @@ window.__ModuleLoader__.load({
                 },
                 h(
                   'div',
-                  { style: { fontWeight: '600', color: '#60a5fa', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '4px' } },
-                  '⏱️ 额度恢复周期说明'
+                  { style: { fontWeight: '600', color: '#60a5fa', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' } },
+                  '⏱️ 额度恢复与重置周期'
                 ),
                 h(
                   'div',
-                  { style: { opacity: 0.85 } },
-                  'Google 个人版采用 5小时动态滑动窗口机制（随时间平滑滚动恢复，非固定自然周限额）。下次重置：' +
+                  { style: { opacity: 0.85, marginBottom: '4px' } },
+                  '• 5小时滑动速率窗口：下次平滑恢复 ' +
                     ((quota && quota.resetCountdown) ? quota.resetCountdown : '计算中')
+                ),
+                h(
+                  'div',
+                  { style: { opacity: 0.85, color: '#38bdf8' } },
+                  '• 📅 周额度重置：' +
+                    ((quota && quota.weeklyResetLabel) ? quota.weeklyResetLabel : '每周一 08:00 (UTC+8)') +
+                    ' (还剩 ' +
+                    ((quota && quota.weeklyResetCountdown) ? quota.weeklyResetCountdown : '计算中') +
+                    ')'
                 )
               ),
               // Context window usage section
@@ -818,6 +836,18 @@ window.__ModuleLoader__.load({
                   name: 'conversation.input.right',
                   id: 'antigravity-quota-pill',
                   order: 10,
+                },
+                QuotaPill
+              )
+            )
+
+            // 4. Register Quota & Context Pill into Bottom Dock Bar (Always visible even during agent activity)
+            c.slots.inject('conversation.composer.dock', () =>
+              c.slots.register(
+                {
+                  name: 'conversation.composer.dock',
+                  id: 'antigravity-quota-dock-pill',
+                  order: 2,
                 },
                 QuotaPill
               )

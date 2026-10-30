@@ -9,6 +9,7 @@ export declare class AntigravityQuotaService {
     constructor(sessionManager: DshSessionManager);
     private fetchUpstreamData;
     private formatCountdown;
+    private getWeeklyResetInfo;
     getSnapshot(sessionId?: string, modelId?: string): Promise<SessionQuotaSnapshot>;
 }
 //# sourceMappingURL=quota-service.d.ts.map

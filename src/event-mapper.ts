@@ -6,13 +6,23 @@ function clean(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "").slice(0, 4_000);
 }
 
+const MAX_SNIPPET_LENGTH = 1_200;
+
+function truncateWithNotice(text: string, maxLen: number = MAX_SNIPPET_LENGTH): string {
+  if (!text) return "";
+  const cleaned = clean(text);
+  if (cleaned.length <= maxLen) return cleaned;
+  const omitted = cleaned.length - maxLen;
+  return `${cleaned.slice(0, maxLen)}\n... [已自动截断余下 ${omitted} 字符，防Token膨胀与网关超时]`;
+}
+
 function formatToolContent(content: any): string {
   if (!Array.isArray(content)) {
-    if (typeof content === "string") return clean(content);
+    if (typeof content === "string") return truncateWithNotice(content);
     return "";
   }
   const lines: string[] = [];
-  for (const item of content.slice(0, 8)) {
+  for (const item of content.slice(0, 5)) {
     if (!item || typeof item !== "object") continue;
     if (item.type === "diff") {
       const p = typeof item.path === "string" ? clean(item.path) : "file";
@@ -20,13 +30,64 @@ function formatToolContent(content: any): string {
     } else if (item.type === "content") {
       const block = item.content;
       if (block?.type === "text" && typeof block.text === "string") {
-        lines.push(clean(block.text).slice(0, 1_500));
+        lines.push(truncateWithNotice(block.text));
       }
     } else if (typeof item.text === "string") {
-      lines.push(clean(item.text).slice(0, 1_500));
+      lines.push(truncateWithNotice(item.text));
     }
   }
   return lines.join("\n");
+}
+
+function isUuidLike(str?: string): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(:\d+)?$/i.test(str.trim());
+}
+
+function parseToolMeta(toolCallId: string, rawTitle?: string, rawName?: string): {
+  stepNumber: string;
+  stepLabel: string;
+  displayTitle: string;
+} {
+  let stepNumber = "";
+  if (toolCallId && toolCallId.includes(":")) {
+    const parts = toolCallId.split(":");
+    const last = parts[parts.length - 1];
+    if (/^\d+$/.test(last)) {
+      stepNumber = last;
+    }
+  }
+
+  let displayTitle = "";
+  if (rawTitle && !isUuidLike(rawTitle) && rawTitle !== toolCallId) {
+    displayTitle = clean(rawTitle);
+  } else if (rawName && !isUuidLike(rawName) && rawName !== toolCallId) {
+    displayTitle = clean(rawName);
+  }
+
+  const stepLabel = stepNumber ? `步骤 #${stepNumber}` : "步骤";
+  return {
+    stepNumber,
+    stepLabel,
+    displayTitle,
+  };
+}
+
+function formatArguments(args: any): string {
+  if (!args) return "";
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (!trimmed || trimmed === "{}" || trimmed === "[]") return "";
+    return trimmed.length > 200 ? `${trimmed.slice(0, 200)}...` : trimmed;
+  }
+  if (typeof args === "object") {
+    const keys = Object.keys(args);
+    if (keys.length === 0) return "";
+    const json = JSON.stringify(args);
+    if (json === "{}") return "";
+    return json.length > 200 ? `${json.slice(0, 200)}...` : json;
+  }
+  return String(args);
 }
 
 export function mapSessionUpdate(notification: SessionNotification): AcpActivity[] {
@@ -51,13 +112,16 @@ export function mapSessionUpdate(notification: SessionNotification): AcpActivity
     case "tool_call": {
       const toolId = String(update.toolCallId || `tool-${Date.now()}`);
       const toolName = clean(update.name || update.title || "antigravity-tool");
-      const title = clean(update.title || update.name || update.toolCallId || "未知工具");
-      const status = update.status ? ` — ${update.status}` : " — 执行中";
-      const argsStr = typeof update.arguments === "string" ? update.arguments : JSON.stringify(update.arguments || {});
+      const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name);
+      const titlePart = displayTitle ? ` \`${displayTitle}\`` : "";
+      const status = update.status && update.status !== "in_progress" ? ` · ${update.status}` : "";
+      const argsStr = formatArguments(update.arguments);
+      const argSection = argsStr ? `\n> 📥 参数: \`${argsStr}\`` : "";
+
       return [
         {
           type: "tool",
-          text: `\n🛠️ **[Antigravity 工具执行]** ${title}${status}\n`,
+          text: `\n> 🛠️ **[${stepLabel}]**${titlePart}${status}${argSection}\n`,
           toolCallId: toolId,
           name: toolName,
           args: argsStr,
@@ -69,14 +133,25 @@ export function mapSessionUpdate(notification: SessionNotification): AcpActivity
     case "tool_call_update": {
       const toolId = String(update.toolCallId || "");
       const toolName = clean(update.name || update.title || "antigravity-tool");
-      const title = clean(update.title || update.name || update.toolCallId || "工具进度");
-      const status = update.status ? ` — ${update.status}` : "";
+      const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name);
+      const isCompleted = update.status === "completed";
+      const isFailed = update.status === "failed" || update.status === "error";
+
+      let tag = `⚡ **[${stepLabel}]**`;
+      if (isCompleted) {
+        tag = `✅ **[${stepLabel} 完成]**`;
+      } else if (isFailed) {
+        tag = `❌ **[${stepLabel} 失败]**`;
+      }
+
+      const titlePart = (displayTitle && displayTitle !== stepLabel) ? ` \`${displayTitle}\`` : "";
       const details = formatToolContent(update.content);
-      const detailSection = details ? `\n\`\`\`\n${details}\n\`\`\`` : "";
+      const detailSection = details ? `\n> \`\`\`\n${details.split("\n").map(l => `> ${l}`).join("\n")}\n> \`\`\`` : "";
+
       return [
         {
           type: "tool",
-          text: `\n⚡ **[Antigravity 工具更新]** ${title}${status}${detailSection}\n`,
+          text: `\n> ${tag}${titlePart}${detailSection}\n`,
           toolCallId: toolId,
           name: toolName,
           isStart: false,
@@ -95,7 +170,7 @@ export function mapSessionUpdate(notification: SessionNotification): AcpActivity
       return [
         {
           type: "plan",
-          text: `\n📋 **[Antigravity 执行计划]**\n${lines.join("\n")}\n`,
+          text: `\n📋 **[任务计划]**\n${lines.join("\n")}\n`,
         },
       ];
     }

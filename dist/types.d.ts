@@ -74,6 +74,9 @@ export interface QuotaSummary {
     remainingPercent: string;
     resetTime?: string;
     resetCountdown?: string;
+    weeklyResetTime?: string;
+    weeklyResetCountdown?: string;
+    weeklyResetLabel?: string;
     tier?: string;
     maxTokens: number;
 }
