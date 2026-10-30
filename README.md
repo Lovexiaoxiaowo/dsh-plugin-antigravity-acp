@@ -1,132 +1,136 @@
+<div align="center">
+
 # dsh-plugin-antigravity-acp
 
+**DeepSeek Harness (DSH) 插件：通过 Google ACP 协议接入 Antigravity 运行时与 Gemini 3.x 模型**
+
+[简体中文](README.md) · [English](README_en.md)
+
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.5-brightgreen.svg)](package.json)
+[![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
-> **DeepSeek Harness (DSH) 插件**：通过标准 **ACP (Agent Client Protocol)** 协议连接 Google **Antigravity 运行时**，为 DSH 提供开箱即用的 **Google Gemini** 模型调用与代码辅助能力。
-
----
-
-## 🌟 核心特性与架构设计
-
-1. **项目自带完整 UI 前端与后台服务（双半身一体化）**
-   - **完全自包含**：通过 GitHub 安装本插件后，**无需手动配置任何网页或修改任何系统文件**。
-   - **自动注册 UI 面板**：DSH 会自动加载本仓库打包的 `dsh/client.js`，在 DSH 的 **【设置】->【插件】顶部自动注入专属「Google Antigravity」标签页**（并在设置左侧导航栏提供专属入口）。
-2. **真正的开箱即用（Zero-Config & Self-Contained）**
-   - 零前置依赖：用户电脑无需预装 Python、Node 构建工具或全局 `pi`。
-   - 跨平台自举：首次运行时自动识别系统架构（Windows x64/arm64、macOS Apple Silicon/Intel、Linux），从 Google 官方 CDN 安全拉取签名运行时 `agy_acp_server`。
-3. **官方标准 Google OAuth 2.0 一键授权**
-   - 原生支持 ACP `oauth-personal` 规范。在插件标签页中点击按钮，即可在系统默认浏览器中调起 Google 官方授权页，无需手动抓取或复制任何 API Key。
-4. **原生 DSH 模型选择器与全双工流式输出（LlmAdapter）**
-   - 授权成功后，DSH 聊天窗口的模型下拉菜单中将自动出现 **`Gemini 3.8 Flash (Antigravity)`**。
-   - 支持完整的**思考过程实时展开（Reasoning Delta）**与**正文流式输出（Text Delta）**。
+</div>
 
 ---
 
-## 🚀 一键安装指南
+## 简介
 
-### 方式 1：在 DSH 桌面端界面中安装（推荐）
+`dsh-plugin-antigravity-acp` 是 DeepSeek Harness (DSH) 的扩展插件。通过标准的 ACP (Agent Client Protocol) 协议连接 Google Antigravity 运行时，让 DSH 可以直接调用 Gemini 3.8 Flash 模型。
 
-1. 打开 **DSH 桌面端 (DeepSeek Harness)**；
-2. 点击左下角 **⚙️ 设置（Settings）** -> **插件（Plugins）**；
-3. 在插件安装输入框中粘贴本 GitHub 仓库地址：
+插件自带设置页面和后台服务，安装后通过 Google 官方 OAuth 授权登录即可使用，支持思维链推理展开、流式输出和 100 万 Token 上下文。
+
+---
+
+## 特性
+
+- **自带设置界面**：安装后自动在 DSH【设置】->【插件】顶部注入专属「Google Antigravity」标签页，并在设置侧边栏提供独立入口，无需手动修改配置文件。
+- **自动下载官方运行时**：无需手动安装 Python、GCC 或配置编译环境。首次运行时自动识别系统（Windows / macOS / Linux），从 Google 官方 CDN 下载对应架构的 `agy_acp_server` 并校验 SHA256。
+- **官方 OAuth 2.0 个人授权**：支持 ACP `oauth-personal` 流程。点击登录后调用系统默认浏览器打开 Google 官方页面授权，无需手动抓取 Cookie 或填写 API Key，插件不接触账号密码明文。
+- **原生模型接入与流式输出**：授权后在聊天窗口直接选择 `Gemini 3.8 Flash (Antigravity)`，支持思维链推理过程展开（Reasoning Delta）和正文流式输出。
+- **配额与状态监控**：内置配额查询服务，可实时查看 Google 账号 Tier 状态与调用限额。
+- **本地存储与隐私安全**：无第三方中转服务器，无遥测埋点。授权凭证仅保存在本机 `~/.gemini/antigravity-acp/` 目录，请求由本地进程直连 Google 官方接口。
+
+---
+
+## 安装
+
+### 方式 1：在 DSH 界面中安装（推荐）
+
+1. 打开 DSH 桌面端；
+2. 进入【设置】->【插件】；
+3. 在安装输入框中粘贴仓库地址：
    ```text
    https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp
    ```
-4. 点击 **安装（Install）**；
-5. DSH 底层包管理器会自动拉取本仓库的预构建产物并完成加载。
+4. 点击【安装】，等待安装完成。
 
 ---
 
-### 方式 2：通过 DSH 命令行安装
+### 方式 2：通过命令行安装
 
 在终端执行：
+
 ```bash
 dsh plugin add https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp
 ```
 
 ---
 
-## 📖 详细使用流程图解
+## 使用步骤
 
 ```mermaid
 flowchart LR
-    A[通过 GitHub 安装插件] --> B[进入设置 -> 插件 -> Google Antigravity 标签页]
-    B --> C[点击【一键登录 Google】完成浏览器授权]
-    C --> D[返回聊天窗口，选择 Gemini 3.8 Flash 模型直接对话]
+    A[安装插件] --> B[进入设置 -> Google Antigravity 页面]
+    B --> C[点击【一键登录 Google】完成授权]
+    C --> D[聊天窗口选择 Gemini 3.8 Flash 开始使用]
 ```
 
-### 步骤 1：打开项目自带的设置标签页
-安装完成后，在 DSH 中即可直接看到本插件提供的操作面板：
-- **入口 A**：点击左下角 **⚙️ 设置** -> **插件** -> 顶部新增的 **【Google Antigravity】标签页**；
-- **入口 B**：在左侧设置导航菜单中，点击 **【⚡ Google Antigravity】** 专栏。
-
-> **提示**：该设置面板由本项目代码自动注入渲染，包含 Google 连接状态、引擎状态监控与即时对话调试面板。
-
-### 步骤 2：完成 Google 账号一键授权
-1. 在上述面板中，点击 **【一键登录 Google】** 按钮；
-2. 系统会自动调用默认浏览器打开 Google 官方安全授权登录页；
-3. 登录并同意授权后，浏览器会提示授权完成，回到 DSH 界面，面板将自动变为 **“Google 账号已就绪 / 运行正常”**。
-
-### 步骤 3：在聊天窗口中使用 Gemini 3.8 Flash 模型
-1. 回到 DSH 主界面并新建或打开任意对话；
-2. 点击顶部/底部的**模型选择下拉列表**；
-3. 在模型分组中找到并勾选 **`Gemini 3.8 Flash (Antigravity)`**；
-4. 发送任意提示词或代码任务，即可享受 Google Antigravity 官方带来的极速思考与代码生成！
+1. **打开设置面板**：安装完成后，进入 DSH【设置】->【插件】-> 顶部【Google Antigravity】标签页（或左侧导航栏的【Google Antigravity】入口）。
+2. **完成 Google 授权**：在面板中点击【一键登录 Google】，系统会打开浏览器前往 Google 官方登录页。授权完成后返回 DSH，面板会更新为已连接状态。
+3. **选择模型并使用**：新建或打开任意对话，在模型下拉列表中选择 `Gemini 3.8 Flash (Antigravity)`，即可开始对话。
 
 ---
 
-## 🛡️ 账号安全与合规保障（无需担心账号/封号风险）
+## 安全性与方案对比
 
-本项目在技术选型与工程实现上严格遵从 Google 官方规范，与市面上“爬虫逆向、抓取网页 Cookie、伪造设备指纹”的非正规方式有**本质区别**：
-
-1. **官方构建与签名运行时（Official CDN Binary）**
-   - 插件底层调用的 `agy_acp_server` 是 Google 官方发布的正规运行时，直接从 Google 官方分发节点（`https://dl.google.com/agy-extensions/...`）拉取，并经过本地 SHA256 完整性严格校验，非破解或修改版。
-2. **官方正规 OAuth 2.0 个人授权（Personal App Auth）**
-   - 授权登录直接调用系统默认浏览器打开 Google 官方安全域（`accounts.google.com`），用户密码与两步验证全程在 Google 官方沙箱中进行，**插件完全接触不到您的密码明文**。
-   - 账号在 Google 后台记录为正常的官方授权应用，杜绝非授权盗刷与风控封号隐患。
-3. **基于 Google 官方 ACP 标准协议（Agent Client Protocol）**
-   - 核心通信直接基于官方 `@agentclientprotocol/sdk`。ACP 是 Google 专为现代 IDE 与智能体客户端制定的开放互操作协议（地位类似于微语言服务协议 LSP），属于官方鼓励与支持的标准接入形态。
-4. **零第三方服务器，凭据纯本地沙箱保存（100% 隐私安全）**
-   - 本插件**绝无任何自建后端中转服务器**，无任何埋点遥测（Telemetry）、日志收集或第三方 Webhook。
-   - 授权凭证仅保存在本机安全目录（`~/.gemini/antigravity-acp/acp_token.json`），大模型对话请求全程由本地进程直连 Google 官方 API。
+| 项目 | 常见网页抓取 / 第三方镜像方案 | 本插件 (dsh-plugin-antigravity-acp) |
+| :--- | :--- | :--- |
+| **接入协议** | 模拟网页请求、逆向非公开接口 | Google 官方规范 ACP (Agent Client Protocol) |
+| **可执行文件** | 来源不明的第三方二进制 | Google 官方 CDN 签名发布 + SHA256 完整性校验 |
+| **认证方式** | 提取 Cookie 或私有 Session Token | Google 官方标准 OAuth 2.0 个人应用授权 |
+| **数据链路** | 经第三方中转服务器，存在泄露风险 | 零中间服务器，本地进程直连 Google 官方接口 |
+| **风控与安全** | 容易触发平台风控导致封号 | 走官方授权通道，正常个人应用调用 |
 
 ---
 
-## ❓ 常见问题排查（FAQ）
+## 常见问题
 
-### Q1：安装或更新后，为什么聊天窗口还没显示新模型/设置没刷新？
-- **原因**：Windows 桌面端点击窗口右上角 `X` 默认**只最小化到系统托盘**，旧版服务仍在后台内存中运行。
-- **解决方法**：
-  1. 查看 Windows 任务栏右下角折叠托盘（时间旁边的小箭头）；
-  2. 找到 **DSH 图标，右键点击 -> 选择【退出 / Exit】**；
-  3. 重新打开 DSH 客户端即可彻底加载最新代码。
+### Q1：安装或更新插件后，为什么聊天界面没有出现模型？
+- **原因**：Windows 桌面端点击窗口右上角 `X` 默认最小化到系统托盘，旧进程仍在后台运行。
+- **解决方式**：在任务栏右下角托盘找到 DSH 图标，右键选择【退出】，然后重新打开 DSH 即可。
 
-### Q2：为什么未登录时在模型列表中看不到 Antigravity？
-- **机制说明**：为了避免无效调用和报错，本插件设计了**严格的登录态门禁**。在用户未完成 Google 授权前，模型列表不会展示该选项；一旦在设置面板完成授权，模型将自动可用。
+### Q2：为什么未授权时在模型列表中看不到 Antigravity？
+- **原因**：为避免未登录时请求报错，插件只在完成 Google 授权后才会向聊天列表注入可用模型。
+
+### Q3：支持哪些操作系统？
+- 支持 Windows (x64 / arm64)、macOS (Apple Silicon / Intel)、Linux (x64 / arm64)。启动时会自动识别平台并下载对应二进制文件。
 
 ---
 
-## 📂 项目结构
+## 项目结构
 
 ```
 dsh-plugin-antigravity-acp/
-├── cordis.patch.yml       # DSH 标准 bundle patch 规范声明
+├── cordis.patch.yml       # DSH bundle patch 规范声明
 ├── dsh/
-│   └── client.js          # DSH 前端 UI 卡片 (基于 window.__ModuleLoader__ 与 Slots 注入)
+│   └── client.js          # DSH 前端扩展（向设置页注入 UI）
 ├── src/
-│   ├── index.ts           # DSH 宿主服务入口、LlmAdapter 适配与 WebServer 路由桥
-│   ├── bootstrapper.ts    # 官方二进制跨平台自举下载与 SHA256 校验
-│   ├── auth.ts            # OAuth 凭据管理与登录态维护
-│   ├── acp-client.ts      # @agentclientprotocol/sdk 双向通信与流式解析
-│   └── runtime-manifest.json # Google 官方下载源清单与签名哈希
-├── dist/                  # 预编译产物 (随 Git 提交，确保 Git 安装零依赖零编译)
+│   ├── index.ts           # 插件服务入口、LlmAdapter 注册与 Web 路由桥接
+│   ├── bootstrapper.ts    # 官方二进制跨平台下载与 SHA256 校验
+│   ├── auth.ts            # OAuth 凭据管理、本地存储与 Token 刷新
+│   ├── acp-client.ts      # @agentclientprotocol/sdk 双向通信与流式处理
+│   ├── quota-service.ts   # Google 账号配额与 Tier 状态查询
+│   ├── session-manager.ts # 会话生命周期与上下文绑定
+│   ├── event-mapper.ts    # ACP 协议事件转 DSH 流式事件
+│   └── runtime-manifest.json # 官方下载源与哈希列表
+├── dist/                  # 预编译产物（包含在仓库中，无需本地编译）
 ├── package.json
-└── README.md
+├── README.md              # 中文说明文档（默认）
+└── README_en.md           # 英文说明文档
 ```
 
 ---
 
-## 📄 License
+## 参与贡献
 
-[MIT License](LICENSE) © 2026 Lovexiaoxiaowo
+欢迎提交 Issue 和 Pull Request：
+- 项目仓库：[GitHub Repository](https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp)
+- 问题反馈：[Issues Tracker](https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp/issues)
+
+---
+
+## 开源协议
+
+本项目采用 [MIT License](LICENSE) 协议。

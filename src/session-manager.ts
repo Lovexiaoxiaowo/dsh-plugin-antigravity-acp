@@ -87,19 +87,34 @@ export class DshSessionManager {
     this.saveToDisk();
   }
 
-  recordUsage(dshSessionId: string, delta: Partial<TokenAccounting>): TokenAccounting {
+  recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>): TokenAccounting {
     const current = this.tokenStats.get(dshSessionId) || {
       inputTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
       cachedTokens: 0,
       totalTokens: 0,
+      currentContextTokens: 0,
     };
 
-    current.inputTokens += delta.inputTokens || 0;
-    current.outputTokens += delta.outputTokens || 0;
-    current.reasoningTokens += delta.reasoningTokens || 0;
-    current.cachedTokens += delta.cachedTokens || 0;
+    // In ACP protocol, usage_update and response token_count represent cumulative
+    // or per-step context size, NOT pure deltas.
+    // inputTokens & cachedTokens denote current step model context window occupancy.
+    const inTokens = Number(snapshot.inputTokens || 0);
+    const cachedTokens = Number(snapshot.cachedTokens || 0);
+    const outTokens = Number(snapshot.outputTokens || 0);
+    const reasonTokens = Number(snapshot.reasoningTokens || 0);
+
+    // Keep highest watermark for input & cached to reflect true context window usage
+    current.inputTokens = Math.max(current.inputTokens, inTokens);
+    current.cachedTokens = Math.max(current.cachedTokens, cachedTokens);
+    current.outputTokens = Math.max(current.outputTokens, outTokens);
+    current.reasoningTokens = Math.max(current.reasoningTokens, reasonTokens);
+
+    // Current context size for this turn
+    const stepContext = inTokens + cachedTokens;
+    current.currentContextTokens = Math.max(current.currentContextTokens || 0, stepContext, current.inputTokens);
+
     current.totalTokens = current.inputTokens + current.outputTokens + current.cachedTokens;
 
     this.tokenStats.set(dshSessionId, current);
@@ -115,8 +130,82 @@ export class DshSessionManager {
         reasoningTokens: 0,
         cachedTokens: 0,
         totalTokens: 0,
+        currentContextTokens: 0,
       }
     );
+  }
+
+  /**
+   * Checks whether a DSH message is an automated system/environment injection
+   * (e.g. @deepseek-ai/dsh-time-context timestamp strings) rather than a direct user prompt.
+   */
+  isSystemInjection(msg: any): boolean {
+    if (!msg) return true;
+    if (msg.role === "system" || msg.role === "developer") return true;
+
+    const sourceKind = msg.source?.kind;
+    if (sourceKind === "time-context" || sourceKind === "system-reminder" || sourceKind === "snapshot") {
+      return true;
+    }
+
+    const text = this.extractText(msg).trim();
+    if (text.startsWith("Time sampled while preparing turn")) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Safely extracts text content from various DSH Message block structures.
+   */
+  extractText(msg: any): string {
+    if (!msg) return "";
+    if (typeof msg.content === "string") return msg.content;
+    if (Array.isArray(msg.content)) {
+      return msg.content
+        .map((c: any) => {
+          if (!c) return "";
+          if (typeof c === "string") return c;
+          if (c.type === "text") return c.text || "";
+          return c.text || "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+    return "";
+  }
+
+  /**
+   * Locates the genuine human user query from the messages list,
+   * skipping trailing time-context injections appended by DSH plugins.
+   */
+  findRealUserPrompt(messages: any[]): string {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return "Hello";
+    }
+
+    // Scan backwards from the end to find the most recent genuine user input
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "user" && !this.isSystemInjection(msg)) {
+        const text = this.extractText(msg).trim();
+        if (text) {
+          return text;
+        }
+      }
+    }
+
+    // Fallback: search backwards for any user message with non-empty text
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "user") {
+        const text = this.extractText(msg).trim();
+        if (text) return text;
+      }
+    }
+
+    // Ultimate fallback: last element text
+    return this.extractText(messages[messages.length - 1]) || "Hello";
   }
 
   /**
@@ -128,29 +217,18 @@ export class DshSessionManager {
       return "Hello";
     }
 
-    const extractText = (msg: any): string => {
-      if (!msg) return "";
-      if (typeof msg.content === "string") return msg.content;
-      if (Array.isArray(msg.content)) {
-        return msg.content
-          .map((c: any) => (typeof c === "string" ? c : c?.text || ""))
-          .filter(Boolean)
-          .join("\n");
-      }
-      return "";
-    };
+    const currentPrompt = this.findRealUserPrompt(messages);
 
-    // If session is already warm in ACP, ACP holds conversational memory.
-    // We only need the latest user input.
-    if (!isNewSession && messages.length > 1) {
-      const last = messages[messages.length - 1];
-      return extractText(last);
+    // If session is already warm in ACP, ACP holds full conversation history.
+    // Deliver ONLY the authentic user query for this turn.
+    if (!isNewSession) {
+      return currentPrompt;
     }
 
-    // If new ACP session, but DSH has existing history (e.g. session recovery),
-    // inject prior context as structured conversation history preamble.
+    // If new ACP session with multiple messages (e.g. session recovery or model switch),
+    // reconstruct prior context as structured conversation preamble.
     if (messages.length === 1) {
-      return extractText(messages[0]);
+      return currentPrompt;
     }
 
     const historyLines: string[] = [
@@ -159,18 +237,30 @@ export class DshSessionManager {
       "",
     ];
 
-    for (let i = 0; i < messages.length - 1; i++) {
+    // Find index of the currentPrompt message so we don't duplicate it in history
+    let realUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "user" && !this.isSystemInjection(msg)) {
+        realUserIdx = i;
+        break;
+      }
+    }
+
+    const limit = realUserIdx >= 0 ? realUserIdx : messages.length - 1;
+    for (let i = 0; i < limit; i++) {
       const m = messages[i];
+      if (this.isSystemInjection(m)) continue;
+
       const role = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
-      const content = extractText(m).trim();
+      const content = this.extractText(m).trim();
       if (content) {
         historyLines.push(`[${role}]:\n${content}\n`);
       }
     }
 
-    const lastMsg = messages[messages.length - 1];
     historyLines.push("=== [Current Turn: User Query] ===");
-    historyLines.push(extractText(lastMsg));
+    historyLines.push(currentPrompt);
 
     return historyLines.join("\n");
   }

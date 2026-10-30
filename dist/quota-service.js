@@ -73,10 +73,26 @@ export class AntigravityQuotaService {
         await this.fetchUpstreamData();
         // Look for matching model quota or fallback to closest flash model
         const models = this.cachedModelsData || {};
-        let modelEntry = models[modelId];
+        const normalizedTarget = modelId.toLowerCase().replace(/[^a-z0-9]/g, "");
+        let modelEntry = models[modelId] ||
+            models[`${modelId}-tiered`] ||
+            models[`${modelId}-thinking`];
         if (!modelEntry) {
             for (const [k, v] of Object.entries(models)) {
-                if (k.includes("flash") || k.includes("gemini")) {
+                if (k.startsWith("tab_") || k.startsWith("chat_"))
+                    continue; // Skip tab completion models
+                const normK = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+                if (normK.includes(normalizedTarget) || normalizedTarget.includes(normK)) {
+                    modelEntry = v;
+                    break;
+                }
+            }
+        }
+        if (!modelEntry) {
+            for (const [k, v] of Object.entries(models)) {
+                if (k.startsWith("tab_") || k.startsWith("chat_"))
+                    continue;
+                if (k.includes("flash") && (v.maxTokens || 0) >= 1_000_000) {
                     modelEntry = v;
                     break;
                 }
@@ -109,7 +125,10 @@ export class AntigravityQuotaService {
                 cachedTokens: 0,
                 totalTokens: 0,
             };
-        const usedTokens = sessionTokens.totalTokens;
+        // Context window usage corresponds to active prompt context footprint (input + cached read)
+        const activeContext = sessionTokens.currentContextTokens ||
+            (sessionTokens.inputTokens > 0 ? sessionTokens.inputTokens : sessionTokens.totalTokens);
+        const usedTokens = activeContext;
         const contextFraction = Math.min(1, usedTokens / maxContextTokens);
         const contextPercentage = `${(contextFraction * 100).toFixed(1)}%`;
         const isWarning = contextFraction >= 0.75;

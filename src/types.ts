@@ -72,6 +72,7 @@ export interface TokenAccounting {
   reasoningTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  currentContextTokens?: number;
 }
 
 export interface ModelQuotaInfo {
