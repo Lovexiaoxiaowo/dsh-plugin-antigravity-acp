@@ -34,6 +34,10 @@ export declare class AntigravityAcpClient {
         sessionId: string;
     }>;
     /**
+     * Resumes an existing agent session.
+     */
+    resumeSession(sessionId: string, cwd?: string): Promise<boolean>;
+    /**
      * Prompts the agent with a user request.
      */
     prompt(sessionId: string, text: string): Promise<any>;

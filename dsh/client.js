@@ -404,6 +404,338 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function AntigravityQuotaPill(react) {
+      var h = react.createElement
+
+      return function QuotaPill(props) {
+        var sessionId = props ? props.sessionId : undefined
+        var snapshotState = react.useState(null)
+        var snapshot = snapshotState[0]
+        var setSnapshot = snapshotState[1]
+
+        var popoverState = react.useState(false)
+        var showPopover = popoverState[0]
+        var setShowPopover = popoverState[1]
+
+        var fetchQuota = react.useCallback(() => {
+          var url = '/antigravity/quota' + (sessionId ? '?sessionId=' + encodeURIComponent(sessionId) : '')
+          fetch(url)
+            .then((r) => r.json())
+            .then((data) => setSnapshot(data))
+            .catch(() => {})
+        }, [sessionId])
+
+        react.useEffect(() => {
+          fetchQuota()
+          var timer = setInterval(fetchQuota, 6000)
+          return () => clearInterval(timer)
+        }, [fetchQuota])
+
+        var isReady = snapshot && snapshot.quota
+        var quota = isReady ? snapshot.quota : null
+        var contextUsage = (snapshot && snapshot.contextUsage) ? snapshot.contextUsage : {
+          percentage: '0.0%',
+          isWarning: false,
+          usedTokens: 0,
+          maxTokens: 1000000,
+        }
+        var sessionTokens = (snapshot && snapshot.sessionTokens) ? snapshot.sessionTokens : {
+          inputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          totalTokens: 0,
+        }
+
+        var isWarn = contextUsage.isWarning
+        var fraction = quota && quota.remainingFraction != null ? quota.remainingFraction : 1
+        var quotaColor = !isReady
+          ? 'var(--dsw-alias-text-secondary, #94a3b8)'
+          : fraction < 0.2
+          ? '#ef4444'
+          : fraction < 0.5
+          ? '#f59e0b'
+          : '#10b981'
+
+        var pillLabel = isReady
+          ? '5h ' + quota.remainingPercent
+          : '额度同步中'
+
+        var pill = h(
+          'div',
+          {
+            onClick: () => {
+              if (!showPopover) fetchQuota()
+              setShowPopover(!showPopover)
+            },
+            title: '点击展开 Antigravity 额度与 Context 详情',
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '2px 8px',
+              marginRight: '6px',
+              borderRadius: '12px',
+              fontSize: '11px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              userSelect: 'none',
+              backgroundColor: 'var(--dsw-alias-bg-layer-2, rgba(255, 255, 255, 0.06))',
+              border: isWarn
+                ? '1px solid #ef4444'
+                : '1px solid var(--dsw-alias-border, rgba(255, 255, 255, 0.12))',
+              color: isWarn ? '#ef4444' : 'var(--dsw-alias-text-primary, #e2e8f0)',
+              transition: 'all 0.15s ease',
+            },
+          },
+          h('span', { style: { color: quotaColor, fontSize: '12px' } }, '⚡'),
+          h('span', null, pillLabel),
+          h('span', { style: { opacity: 0.35 } }, '|'),
+          h('span', null, '上下文 ' + contextUsage.percentage),
+          h(
+            'svg',
+            {
+              width: 10,
+              height: 10,
+              viewBox: '0 0 24 24',
+              fill: 'none',
+              stroke: 'currentColor',
+              strokeWidth: 2,
+              style: {
+                transform: showPopover ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s ease',
+                opacity: 0.6,
+                marginLeft: '1px',
+              },
+            },
+            h('path', { d: 'M6 9l6 6 6-6' })
+          )
+        )
+
+        var popover = !showPopover
+          ? null
+          : h(
+              'div',
+              {
+                style: {
+                  position: 'absolute',
+                  bottom: 'calc(100% + 8px)',
+                  right: 0,
+                  width: '320px',
+                  padding: '14px',
+                  backgroundColor: 'var(--dsw-alias-bg-layer-1, #1a1c22)',
+                  border: '1px solid var(--dsw-alias-border, rgba(255, 255, 255, 0.15))',
+                  borderRadius: '10px',
+                  boxShadow: '0 10px 30px rgba(0, 0, 0, 0.45)',
+                  zIndex: 9999,
+                  fontSize: '12px',
+                  color: 'var(--dsw-alias-text-primary, #e2e8f0)',
+                  fontFamily: 'inherit',
+                },
+              },
+              // Header
+              h(
+                'div',
+                {
+                  style: {
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px',
+                    borderBottom: '1px solid var(--dsw-alias-border, rgba(255,255,255,0.08))',
+                    paddingBottom: '8px',
+                  },
+                },
+                h(
+                  'div',
+                  { style: { fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' } },
+                  h('span', { style: { color: '#3b82f6' } }, '⚡'),
+                  'Google Antigravity 额度'
+                ),
+                h(
+                  'span',
+                  {
+                    style: {
+                      fontSize: '10px',
+                      padding: '1px 6px',
+                      borderRadius: '10px',
+                      backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                      color: '#60a5fa',
+                    },
+                  },
+                  (quota && quota.tier) ? quota.tier : 'Google Cloud Code'
+                )
+              ),
+              // 5h Quota section
+              h(
+                'div',
+                { style: { marginBottom: '12px' } },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
+                  h('span', { style: { opacity: 0.8 } }, '5小时滑动窗口额度'),
+                  h('span', { style: { fontWeight: '600', color: quotaColor } }, (quota && quota.remainingPercent) ? quota.remainingPercent : '正在同步...')
+                ),
+                h(
+                  'div',
+                  {
+                    style: {
+                      height: '6px',
+                      borderRadius: '3px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      overflow: 'hidden',
+                      marginBottom: '4px',
+                    },
+                  },
+                  h('div', {
+                    style: {
+                      height: '100%',
+                      width: (quota && quota.remainingPercent) ? quota.remainingPercent : '0%',
+                      backgroundColor: quotaColor,
+                      borderRadius: '3px',
+                      transition: 'width 0.3s ease',
+                    },
+                  })
+                ),
+                quota && quota.resetCountdown
+                  ? h(
+                      'div',
+                      { style: { fontSize: '10px', opacity: 0.6, textAlign: 'right' } },
+                      '下次重置: ' + quota.resetCountdown
+                    )
+                  : null
+              ),
+              // Context window usage section
+              h(
+                'div',
+                { style: { marginBottom: '12px' } },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
+                  h('span', { style: { opacity: 0.8 } }, '1M 上下文占用 (Gemini 3.8)'),
+                  h(
+                    'span',
+                    { style: { fontWeight: '600', color: isWarn ? '#ef4444' : '#3b82f6' } },
+                    contextUsage.percentage
+                  )
+                ),
+                h(
+                  'div',
+                  {
+                    style: {
+                      height: '6px',
+                      borderRadius: '3px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      overflow: 'hidden',
+                      marginBottom: '4px',
+                    },
+                  },
+                  h('div', {
+                    style: {
+                      height: '100%',
+                      width: contextUsage.percentage,
+                      backgroundColor: isWarn ? '#ef4444' : '#3b82f6',
+                      borderRadius: '3px',
+                    },
+                  })
+                ),
+                h(
+                  'div',
+                  {
+                    style: {
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: '10px',
+                      opacity: 0.6,
+                    },
+                  },
+                  h(
+                    'span',
+                    null,
+                    contextUsage.usedTokens.toLocaleString() +
+                      ' / ' +
+                      contextUsage.maxTokens.toLocaleString() +
+                      ' tokens'
+                  ),
+                  h('span', null, isWarn ? '⚠️ 建议开启新会话' : '安全裕量充足')
+                )
+              ),
+              // Session Token stats section
+              h(
+                'div',
+                {
+                  style: {
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    padding: '8px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--dsw-alias-border, rgba(255,255,255,0.06))',
+                    marginBottom: '10px',
+                  },
+                },
+                h(
+                  'div',
+                  { style: { fontSize: '11px', fontWeight: '500', marginBottom: '6px', opacity: 0.9 } },
+                  '本次会话 Token 记账'
+                ),
+                h(
+                  'div',
+                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' } },
+                  h(
+                    'div',
+                    null,
+                    h('span', { style: { opacity: 0.6 } }, '输入: '),
+                    sessionTokens.inputTokens.toLocaleString()
+                  ),
+                  h(
+                    'div',
+                    null,
+                    h('span', { style: { opacity: 0.6 } }, '输出: '),
+                    sessionTokens.outputTokens.toLocaleString()
+                  ),
+                  h(
+                    'div',
+                    null,
+                    h('span', { style: { opacity: 0.6 } }, '思考: '),
+                    (sessionTokens.reasoningTokens || 0).toLocaleString()
+                  ),
+                  h(
+                    'div',
+                    null,
+                    h('span', { style: { opacity: 0.6 } }, '总计: '),
+                    sessionTokens.totalTokens.toLocaleString()
+                  )
+                )
+              ),
+              // Footer
+              h(
+                'div',
+                {
+                  style: {
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '10px',
+                    opacity: 0.5,
+                  },
+                },
+                h('span', null, '实时同步自 Google 官方额度'),
+                h(
+                  'span',
+                  {
+                    style: { cursor: 'pointer', textDecoration: 'underline' },
+                    onClick: (e) => {
+                      e.stopPropagation()
+                      fetchQuota()
+                    },
+                  },
+                  '刷新'
+                )
+              )
+            )
+
+        return h('div', { style: { position: 'relative', display: 'inline-flex', alignItems: 'center' } }, pill, popover)
+      }
+    }
+
     function apply(ctx) {
       function setup(c) {
         try {
@@ -413,6 +745,7 @@ window.__ModuleLoader__.load({
             return
           }
           var Card = AntigravityCard(react)
+          var QuotaPill = AntigravityQuotaPill(react)
 
           if (c.slots && typeof c.slots.inject === 'function') {
             // 1. Register into Settings -> Plugins -> Tabs
@@ -438,6 +771,18 @@ window.__ModuleLoader__.load({
                   label: () => '⚡ Google Antigravity',
                 },
                 Card
+              )
+            )
+
+            // 3. Register Quota & Context Pill into Chat Input Bar (Immediately left of model selector)
+            c.slots.inject('conversation.input.right', () =>
+              c.slots.register(
+                {
+                  name: 'conversation.input.right',
+                  id: 'antigravity-quota-pill',
+                  order: 10,
+                },
+                QuotaPill
               )
             )
           }

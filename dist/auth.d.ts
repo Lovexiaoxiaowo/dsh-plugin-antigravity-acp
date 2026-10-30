@@ -8,6 +8,10 @@ export declare function getAntigravityTokenPath(): string;
  */
 export declare function hasLocalCredentials(): boolean;
 /**
+ * Retrieves or refreshes a valid Google OAuth access token.
+ */
+export declare function getFreshAccessToken(): Promise<string | null>;
+/**
  * Clears local Antigravity credentials (logout).
  */
 export declare function clearLocalCredentials(): void;

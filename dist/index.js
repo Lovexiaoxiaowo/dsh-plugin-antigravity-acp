@@ -2,10 +2,16 @@ import path from "node:path";
 import { ensureAntigravityServer } from "./bootstrapper.js";
 import { hasLocalCredentials, clearLocalCredentials } from "./auth.js";
 import { AntigravityAcpClient } from "./acp-client.js";
+import { DshSessionManager } from "./session-manager.js";
+import { AntigravityQuotaService } from "./quota-service.js";
+import { mapSessionUpdate, DshStreamWriter } from "./event-mapper.js";
 export * from "./types.js";
 export * from "./bootstrapper.js";
 export * from "./auth.js";
 export * from "./acp-client.js";
+export * from "./session-manager.js";
+export * from "./quota-service.js";
+export * from "./event-mapper.js";
 export const name = "dsh-plugin-antigravity-acp";
 export const inject = [];
 /**
@@ -23,6 +29,8 @@ export class DshAntigravityService {
     notificationListeners = new Map();
     wasLoggedIn = false;
     onAuthChange;
+    sessionManager = new DshSessionManager();
+    quotaService = new AntigravityQuotaService(this.sessionManager);
     constructor(config = {}) {
         this.config = config;
         this.projectRoot = path.resolve(import.meta.dirname, "..");
@@ -159,16 +167,16 @@ export class DshAntigravityService {
     /**
      * Creates an active agent session in target directory.
      */
-    async createSession(cwd) {
+    async createSession(cwd, options) {
         if (!this.client) {
             await this.initialize();
         }
         if (!this.client)
             throw new Error("Failed to initialize Antigravity client");
         return await this.client.createSession(cwd, {
-            permissionMode: this.config.permissionMode || "yolo",
-            model: this.config.defaultModel || "gemini-3.8-flash",
-            reasoningEffort: this.config.reasoningEffort || "high",
+            permissionMode: options?.permissionMode || this.config.permissionMode || "yolo",
+            model: options?.model || this.config.defaultModel || "gemini-3.8-flash",
+            reasoningEffort: options?.reasoningEffort || this.config.reasoningEffort || "high",
         });
     }
     /**
@@ -191,17 +199,61 @@ export class DshAntigravityService {
         }
     }
     /**
-     * Streams prompt response as real-time chunks conforming to DSH StreamChunk.
+     * Retrieves snapshot of quota, session tokens, and context window usage.
      */
-    async *streamPrompt(text, options) {
+    async getQuotaSnapshot(sessionId, modelId) {
+        return await this.quotaService.getSnapshot(sessionId, modelId || this.config.defaultModel);
+    }
+    /**
+     * Streams prompt response as real-time chunks conforming to DSH StreamChunk.
+     * Solves context retention across turns and maps ACP tool / plan trajectories into reasoning.
+     */
+    async *streamPrompt(input, options) {
         if (!this.isLoggedIn()) {
             throw new Error("请先在「设置 -> 插件 -> Google Antigravity」完成 Google 账号登录授权。");
         }
-        const session = await this.createSession(options?.cwd || process.cwd());
+        if (!this.client) {
+            await this.initialize();
+        }
+        if (!this.client)
+            throw new Error("Failed to initialize Antigravity client.");
+        const dshSessionId = options?.sessionId || "default-session";
+        const cwd = options?.cwd || process.cwd();
+        const model = options?.model || this.config.defaultModel || "gemini-3.8-flash";
+        const reasoningEffort = options?.reasoningEffort || this.config.reasoningEffort || "high";
+        let binding = this.sessionManager.getBinding(dshSessionId);
+        let isNewSession = false;
+        let acpSessionId = binding?.acpSessionId;
+        if (!acpSessionId) {
+            isNewSession = true;
+            const res = await this.createSession(cwd, {
+                model,
+                reasoningEffort,
+            });
+            acpSessionId = res.sessionId;
+            binding = {
+                dshSessionId,
+                acpSessionId,
+                cwd,
+                model,
+                reasoningEffort,
+                lastActive: Date.now(),
+                messageCount: 0,
+            };
+            this.sessionManager.saveBinding(binding);
+        }
+        // Format prompt preserving historical conversation if session was recreated/new
+        let promptText = "";
+        if (typeof input === "string") {
+            promptText = input;
+        }
+        else if (Array.isArray(input)) {
+            promptText = this.sessionManager.formatPromptWithHistory(input, isNewSession);
+        }
         const listenerKey = `stream-${Date.now()}-${Math.random()}`;
         const queue = [];
         let resolver = null;
-        const push = (item) => {
+        const pushItem = (item) => {
             if (resolver) {
                 const r = resolver;
                 resolver = null;
@@ -219,57 +271,64 @@ export class DshAntigravityService {
                 resolver = resolve;
             });
         };
+        // DSH Stream Writer ensures strict lifecycle:
+        // block-start (reasoning) -> reasoning-delta -> block-end -> block-start (text) -> text-delta -> block-end
+        const writer = new DshStreamWriter((chunk) => {
+            pushItem({ chunk });
+        });
         this.notificationListeners.set(listenerKey, (notice) => {
-            const update = notice?.update;
-            if (!update)
+            if (notice?.sessionId && notice.sessionId !== acpSessionId) {
                 return;
-            if (update.sessionUpdate === "agent_thought_chunk") {
-                const thought = update.content?.text || (typeof update.content === "string" ? update.content : "");
-                if (thought) {
-                    push({ chunk: { type: "reasoning-delta", index: 0, text: thought } });
-                }
             }
-            else if (update.sessionUpdate === "agent_message_chunk") {
-                const msg = update.content?.text || (typeof update.content === "string" ? update.content : "");
-                if (msg) {
-                    push({ chunk: { type: "text-delta", index: 1, text: msg } });
+            const activities = mapSessionUpdate(notice);
+            for (const activity of activities) {
+                if (activity.type === "thought") {
+                    writer.writeThinking(activity.delta);
                 }
-            }
-            else if (update.agent_output_chunk?.content) {
-                push({ chunk: { type: "text-delta", index: 1, text: update.agent_output_chunk.content } });
-            }
-            else if (typeof update === "string") {
-                push({ chunk: { type: "text-delta", index: 1, text: update } });
-            }
-            else if (update.content) {
-                if (typeof update.content === "string") {
-                    push({ chunk: { type: "text-delta", index: 1, text: update.content } });
+                else if (activity.type === "tool" || activity.type === "plan") {
+                    // Format tool activity and plan into thinking stream so it appears in the trace UI
+                    writer.writeThinking(activity.text);
                 }
-                else if (update.content?.text) {
-                    push({ chunk: { type: "text-delta", index: 1, text: update.content.text } });
+                else if (activity.type === "text") {
+                    writer.writeText(activity.delta);
                 }
-                else if (Array.isArray(update.content)) {
-                    for (const item of update.content) {
-                        if (item?.type === "text" && item.text) {
-                            push({ chunk: { type: "text-delta", index: 1, text: item.text } });
-                        }
-                    }
+                else if (activity.type === "usage") {
+                    this.sessionManager.recordUsage(dshSessionId, activity.usage);
+                    writer.writeUsage(activity.usage);
                 }
             }
         });
         const abortHandler = () => {
-            this.cancel(session.sessionId).catch(() => { });
-            push({ done: true });
+            if (acpSessionId) {
+                this.cancel(acpSessionId).catch(() => { });
+            }
+            writer.finish("stop");
+            pushItem({ done: true });
         };
         options?.signal?.addEventListener("abort", abortHandler, { once: true });
         // Execute prompt asynchronously
-        this.prompt(session.sessionId, text)
-            .then(() => {
-            push({ chunk: { type: "finish", reason: "stop" } });
-            push({ done: true });
+        this.prompt(acpSessionId, promptText)
+            .then((response) => {
+            this.sessionManager.incrementMessageCount(dshSessionId);
+            // Extract token usage from meta.quota if available
+            const quota = response?._meta?.quota;
+            const tokens = quota?.token_count || response?.usage;
+            if (tokens) {
+                const recorded = this.sessionManager.recordUsage(dshSessionId, {
+                    inputTokens: Number(tokens.input_tokens || tokens.inputTokens || 0),
+                    outputTokens: Number(tokens.output_tokens || tokens.outputTokens || 0),
+                    reasoningTokens: Number(tokens.thought_tokens || tokens.thoughtTokens || 0),
+                    cachedTokens: Number(tokens.cached_tokens || tokens.cachedReadTokens || 0),
+                });
+                writer.writeUsage(recorded);
+            }
+            writer.finish("stop");
+            pushItem({ done: true });
         })
             .catch((err) => {
-            push({ error: err });
+            // If error indicates session invalid/not found, remove binding for next retry
+            this.sessionManager.removeBinding(dshSessionId);
+            pushItem({ error: err });
         });
         try {
             while (true) {
@@ -362,6 +421,13 @@ export function apply(ctx, config = {}) {
                             const pathname = url.pathname;
                             if (pathname === "/antigravity/status") {
                                 send(200, service.getStatus());
+                                return;
+                            }
+                            if (pathname === "/antigravity/quota") {
+                                const sessionId = url.searchParams.get("sessionId") || undefined;
+                                const model = url.searchParams.get("model") || undefined;
+                                const snapshot = await service.getQuotaSnapshot(sessionId, model);
+                                send(200, snapshot);
                                 return;
                             }
                             if (pathname === "/antigravity/login") {
@@ -472,17 +538,15 @@ export function apply(ctx, config = {}) {
                         },
                         stream(options) {
                             const messages = options.messages || [];
-                            const lastMsg = messages[messages.length - 1];
-                            let text = "";
-                            if (typeof lastMsg?.content === "string") {
-                                text = lastMsg.content;
-                            }
-                            else if (Array.isArray(lastMsg?.content)) {
-                                text = lastMsg.content
-                                    .map((c) => (typeof c === "string" ? c : c.text || ""))
-                                    .join("\n");
-                            }
-                            return service.streamPrompt(text || "Hello", { signal: options.signal });
+                            const sessionId = options.sessionId || undefined;
+                            const model = options.model || "gemini-3.8-flash";
+                            const reasoningEffort = options.reasoningEffort || "high";
+                            return service.streamPrompt(messages, {
+                                signal: options.signal,
+                                sessionId,
+                                model,
+                                reasoningEffort,
+                            });
                         },
                     });
                 }

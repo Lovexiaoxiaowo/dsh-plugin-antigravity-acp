@@ -1,8 +1,13 @@
-import type { AntigravityPluginConfig } from "./types.js";
+import { DshSessionManager } from "./session-manager.js";
+import { AntigravityQuotaService } from "./quota-service.js";
+import type { AntigravityPluginConfig, ReasoningEffort, SessionQuotaSnapshot } from "./types.js";
 export * from "./types.js";
 export * from "./bootstrapper.js";
 export * from "./auth.js";
 export * from "./acp-client.js";
+export * from "./session-manager.js";
+export * from "./quota-service.js";
+export * from "./event-mapper.js";
 export declare const name = "dsh-plugin-antigravity-acp";
 export declare const inject: never[];
 /**
@@ -20,6 +25,8 @@ export declare class DshAntigravityService {
     private notificationListeners;
     private wasLoggedIn;
     onAuthChange?: () => void;
+    readonly sessionManager: DshSessionManager;
+    readonly quotaService: AntigravityQuotaService;
     constructor(config?: AntigravityPluginConfig);
     /**
      * Initializes the service:
@@ -58,7 +65,11 @@ export declare class DshAntigravityService {
     /**
      * Creates an active agent session in target directory.
      */
-    createSession(cwd: string): Promise<{
+    createSession(cwd: string, options?: {
+        model?: string;
+        reasoningEffort?: ReasoningEffort;
+        permissionMode?: any;
+    }): Promise<{
         sessionId: string;
     }>;
     /**
@@ -70,11 +81,19 @@ export declare class DshAntigravityService {
      */
     cancel(sessionId: string): Promise<void>;
     /**
-     * Streams prompt response as real-time chunks conforming to DSH StreamChunk.
+     * Retrieves snapshot of quota, session tokens, and context window usage.
      */
-    streamPrompt(text: string, options?: {
+    getQuotaSnapshot(sessionId?: string, modelId?: string): Promise<SessionQuotaSnapshot>;
+    /**
+     * Streams prompt response as real-time chunks conforming to DSH StreamChunk.
+     * Solves context retention across turns and maps ACP tool / plan trajectories into reasoning.
+     */
+    streamPrompt(input: string | any[], options?: {
         signal?: AbortSignal;
         cwd?: string;
+        sessionId?: string;
+        model?: string;
+        reasoningEffort?: ReasoningEffort;
     }): AsyncIterable<any>;
     /**
      * Quick completion test helper for DSH UI / card test

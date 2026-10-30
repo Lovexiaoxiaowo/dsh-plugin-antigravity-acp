@@ -27,6 +27,53 @@ export function hasLocalCredentials() {
     }
 }
 /**
+ * Retrieves or refreshes a valid Google OAuth access token.
+ */
+export async function getFreshAccessToken() {
+    const tokenPath = getAntigravityTokenPath();
+    if (!fs.existsSync(tokenPath)) {
+        return null;
+    }
+    try {
+        const raw = fs.readFileSync(tokenPath, "utf-8");
+        const json = JSON.parse(raw);
+        // If access_token exists and not expired (with 60s buffer)
+        if (json.access_token && json.expires_at && Date.now() < json.expires_at - 60_000) {
+            return json.access_token;
+        }
+        if (!json.refresh_token) {
+            return json.access_token || null;
+        }
+        // Refresh token via OAuth endpoint
+        const tokenUri = json.token_uri || "https://oauth2.googleapis.com/token";
+        const res = await fetch(tokenUri, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                client_id: json.client_id,
+                client_secret: json.client_secret,
+                refresh_token: json.refresh_token,
+                grant_type: "refresh_token",
+            }),
+        });
+        if (!res.ok) {
+            return json.access_token || null;
+        }
+        const refreshed = await res.json();
+        if (refreshed.access_token) {
+            json.access_token = refreshed.access_token;
+            json.expires_at = Date.now() + (refreshed.expires_in || 3600) * 1000;
+            fs.writeFileSync(tokenPath, JSON.stringify(json, null, 2), "utf-8");
+            return refreshed.access_token;
+        }
+        return json.access_token || null;
+    }
+    catch (err) {
+        console.error("[antigravity-acp] failed to refresh access token:", err);
+        return null;
+    }
+}
+/**
  * Clears local Antigravity credentials (logout).
  */
 export function clearLocalCredentials() {

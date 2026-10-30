@@ -145,31 +145,76 @@ export class AntigravityAcpClient {
 
     this.currentSessionId = res.sessionId;
 
-    // Configure permission mode if server supports it
-    if (options?.permissionMode) {
-      try {
-        await (this.connection as any).setMode?.({
+    // Configure permission mode via standard setSessionMode / legacy setMode
+    const mode = options?.permissionMode || "yolo";
+    try {
+      if (typeof this.connection.setSessionMode === "function") {
+        await this.connection.setSessionMode({
           sessionId: res.sessionId,
-          modeId: options.permissionMode,
+          modeId: mode,
         });
-      } catch {
-        // Mode setting is optional depending on exact server build
+      } else if (typeof (this.connection as any).setMode === "function") {
+        await (this.connection as any).setMode({
+          sessionId: res.sessionId,
+          modeId: mode,
+        });
       }
+    } catch (err) {
+      // Non-fatal if unsupported by specific binary build
     }
 
-    // Configure model if specified
+    // Configure model via standard setSessionConfigOption / legacy setModel
     if (options?.model) {
       try {
-        await (this.connection as any).setModel?.({
-          sessionId: res.sessionId,
-          modelId: options.model,
-        });
-      } catch {
+        if (typeof this.connection.setSessionConfigOption === "function") {
+          await this.connection.setSessionConfigOption({
+            sessionId: res.sessionId,
+            configId: "model",
+            value: options.model,
+          });
+        } else if (typeof (this.connection as any).setModel === "function") {
+          await (this.connection as any).setModel({
+            sessionId: res.sessionId,
+            modelId: options.model,
+          });
+        }
+      } catch (err) {
         // Fallback gracefully
       }
     }
 
+    // Configure reasoning effort (critical for enabling Gemini thought chunks)
+    const reasoningEffort = options?.reasoningEffort || "high";
+    try {
+      if (typeof this.connection.setSessionConfigOption === "function") {
+        await this.connection.setSessionConfigOption({
+          sessionId: res.sessionId,
+          configId: "reasoning_effort",
+          value: reasoningEffort,
+        });
+      }
+    } catch (err) {
+      // Non-fatal if unsupported
+    }
+
     return { sessionId: res.sessionId };
+  }
+
+  /**
+   * Resumes an existing agent session.
+   */
+  async resumeSession(sessionId: string, cwd: string = process.cwd()): Promise<boolean> {
+    if (!this.connection) return false;
+    try {
+      if (typeof this.connection.resumeSession === "function") {
+        await this.connection.resumeSession({ sessionId, cwd, mcpServers: [] });
+        this.currentSessionId = sessionId;
+        return true;
+      }
+    } catch {
+      // Fallback
+    }
+    return false;
   }
 
   /**

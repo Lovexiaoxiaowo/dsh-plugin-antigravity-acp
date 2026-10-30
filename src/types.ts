@@ -55,3 +55,57 @@ export interface ModelOption {
   name: string;
   description?: string;
 }
+
+export interface AcpSessionBinding {
+  dshSessionId: string;
+  acpSessionId: string;
+  cwd: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  lastActive: number;
+  messageCount: number;
+}
+
+export interface TokenAccounting {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+}
+
+export interface ModelQuotaInfo {
+  remainingFraction: number;
+  resetTime?: string;
+}
+
+export interface QuotaSummary {
+  model: string;
+  displayName: string;
+  remainingFraction: number;
+  remainingPercent: string;
+  resetTime?: string;
+  resetCountdown?: string;
+  tier?: string;
+  maxTokens: number;
+}
+
+export interface SessionQuotaSnapshot {
+  quota?: QuotaSummary;
+  sessionTokens: TokenAccounting;
+  contextUsage: {
+    usedTokens: number;
+    maxTokens: number;
+    fraction: number;
+    percentage: string;
+    isWarning: boolean;
+  };
+}
+
+export type AcpActivity =
+  | { type: "text"; delta: string }
+  | { type: "thought"; delta: string }
+  | { type: "tool"; text: string }
+  | { type: "plan"; text: string }
+  | { type: "usage"; usage: TokenAccounting }
+  | { type: "unknown"; updateType: string };
