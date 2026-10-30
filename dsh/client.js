@@ -358,35 +358,58 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function registerCard(ctx) {
-      if (typeof ctx.inject !== 'function') return
-      ctx.inject(['slots'], (scope) => {
-        try {
-          var react = require('react')
-          var Card = AntigravityCard(react)
-          ctx.slots.inject('settings.plugin.item', function* () {
-            yield ctx.slots.register(
-              {
-                name: 'settings.plugin.item',
-                id: 'antigravity-acp',
-                key: 'antigravity-acp',
-                order: 10,
-              },
-              Card
-            )
-          })
-        } catch (error) {
-          console.error(`[antigravity-acp] register card error: ${error}`)
-        }
-      })
-    }
-
     function apply(ctx) {
-      registerCard(ctx)
+      function setup(c) {
+        try {
+          var react = (typeof require === 'function' ? require('react') : null) || window.React
+          if (!react) {
+            console.error('[antigravity-acp] React runtime not found')
+            return
+          }
+          var Card = AntigravityCard(react)
+
+          if (c.slots && typeof c.slots.inject === 'function') {
+            // 1. Register into Settings -> Plugins -> Tabs
+            c.slots.inject('settings.plugins.tab', () =>
+              c.slots.register(
+                {
+                  name: 'settings.plugins.tab',
+                  id: 'antigravity-acp',
+                  order: 20,
+                  label: () => 'Google Antigravity',
+                },
+                Card
+              )
+            )
+
+            // 2. Register into Settings -> Left Sidebar Section
+            c.slots.inject('settings.section', () =>
+              c.slots.register(
+                {
+                  name: 'settings.section',
+                  id: 'antigravity-acp',
+                  order: 25,
+                  label: () => '⚡ Google Antigravity',
+                },
+                Card
+              )
+            )
+          }
+        } catch (error) {
+          console.error('[antigravity-acp] register card error:', error)
+        }
+      }
+
+      if (ctx.slots) {
+        setup(ctx)
+      } else if (typeof ctx.inject === 'function') {
+        ctx.inject(['slots'], () => setup(ctx))
+      }
     }
 
     exports.apply = apply
-    exports.inject = []
+    exports.inject = ['slots']
     return module.exports
   },
 })
+
