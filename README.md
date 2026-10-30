@@ -29,7 +29,7 @@
 2. 点击左下角 **⚙️ 设置（Settings）** -> **插件（Plugins）**。
 3. 在插件安装输入框中粘贴本 GitHub 仓库地址：
    ```text
-   https://github.com/YOUR_USERNAME/dsh-plugin-antigravity-acp
+   https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp
    ```
 4. 点击 **安装（Install）**，DSH 会自动完成拉取并注册为 Bundle 插件层。
 
@@ -39,7 +39,7 @@
 
 在终端执行：
 ```bash
-dsh plugin add https://github.com/YOUR_USERNAME/dsh-plugin-antigravity-acp
+dsh plugin add https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp
 ```
 
 ---

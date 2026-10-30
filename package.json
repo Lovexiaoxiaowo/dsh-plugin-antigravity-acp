@@ -38,6 +38,14 @@
   ],
   "author": "tanfeng",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp.git"
+  },
+  "homepage": "https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp#readme",
+  "bugs": {
+    "url": "https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp/issues"
+  },
   "files": [
     "dist",
     "dsh",
