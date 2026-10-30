@@ -4,7 +4,9 @@ export interface AcpClientEventHandlers {
     onNotification?: (notification: SessionNotification) => void;
     onRequestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
     onServerExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
+    onAuthUrl?: (url: string) => void;
 }
+export declare function openUrlInBrowser(url: string): void;
 export declare class AntigravityAcpClient {
     private readonly serverBinaryPath;
     private readonly defaultArgs;

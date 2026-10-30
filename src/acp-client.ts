@@ -15,6 +15,21 @@ export interface AcpClientEventHandlers {
   onNotification?: (notification: SessionNotification) => void;
   onRequestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
   onServerExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
+  onAuthUrl?: (url: string) => void;
+}
+
+export function openUrlInBrowser(url: string): void {
+  try {
+    if (process.platform === "win32") {
+      spawn("cmd.exe", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+    } else if (process.platform === "darwin") {
+      spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+    } else {
+      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+    }
+  } catch (err) {
+    console.error("[antigravity-acp] failed to open browser:", err);
+  }
 }
 
 export class AntigravityAcpClient {
@@ -33,7 +48,7 @@ export class AntigravityAcpClient {
    */
   async start(): Promise<InitializeResponse> {
     this.childProcess = spawn(this.serverBinaryPath, this.defaultArgs, {
-      stdio: ["pipe", "pipe", "inherit"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
         // Ensures stdout is clean for pure JSON-RPC
@@ -43,6 +58,16 @@ export class AntigravityAcpClient {
 
     this.childProcess.on("exit", (code, signal) => {
       this.handlers.onServerExit?.(code, signal);
+    });
+
+    this.childProcess.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      const match = text.match(/https:\/\/accounts\.google\.com\/o\/oauth2\/[^\s'"]+/);
+      if (match) {
+        const url = match[0];
+        this.handlers.onAuthUrl?.(url);
+        openUrlInBrowser(url);
+      }
     });
 
     if (!this.childProcess.stdin || !this.childProcess.stdout) {

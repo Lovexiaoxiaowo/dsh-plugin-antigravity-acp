@@ -50,6 +50,13 @@ window.__ModuleLoader__.load({
             .then((data) => {
               setStatus(data)
               setLoading(false)
+              if (data.authUrl && !data.isLoggedIn) {
+                try {
+                  window.open(data.authUrl, '_blank')
+                } catch (e) {
+                  console.error('[antigravity-acp] window.open blocked', e)
+                }
+              }
             })
             .catch((err) => {
               alert('登录出错: ' + (err.message || String(err)))
@@ -58,10 +65,17 @@ window.__ModuleLoader__.load({
         }
 
         var handleLogout = () => {
+          setLoading(true)
           fetch('/antigravity/logout')
             .then((r) => r.json())
-            .then((data) => setStatus(data))
-            .catch((err) => alert('退出出错: ' + (err.message || String(err))))
+            .then((data) => {
+              setStatus(data)
+              setLoading(false)
+            })
+            .catch((err) => {
+              alert('退出出错: ' + (err.message || String(err)))
+              setLoading(false)
+            })
         }
 
         var handleRunTest = () => {
@@ -253,6 +267,45 @@ window.__ModuleLoader__.load({
                       loading ? '正在调起浏览器...' : '一键登录 Google'
                     )
               ),
+              status?.authUrl && !status?.isLoggedIn
+                ? h(
+                    'div',
+                    {
+                      style: {
+                        padding: '8px 12px',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        border: '1px solid rgba(33, 150, 243, 0.3)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        lineHeight: '1.4',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '8px',
+                      },
+                    },
+                    h(
+                      'span',
+                      { style: { color: '#2196f3' } },
+                      '已启动授权流程。若浏览器未自动弹出，可直接：'
+                    ),
+                    h(
+                      'a',
+                      {
+                        href: status.authUrl,
+                        target: '_blank',
+                        style: {
+                          color: '#2196f3',
+                          fontWeight: 600,
+                          textDecoration: 'underline',
+                          cursor: 'pointer',
+                          flex: 'none',
+                        },
+                      },
+                      '手动打开 Google 授权页 ↗'
+                    )
+                  )
+                : null,
               h(
                 'div',
                 {

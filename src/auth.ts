@@ -36,4 +36,15 @@ export function clearLocalCredentials(): void {
   if (fs.existsSync(tokenPath)) {
     fs.unlinkSync(tokenPath);
   }
+  const geminiHome = process.env.GEMINI_HOME || path.join(os.homedir(), ".gemini");
+  const settingsPath = path.join(geminiHome, "antigravity-acp", "settings.json");
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      delete settings.auth;
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+    } catch {
+      // ignore
+    }
+  }
 }

@@ -15,6 +15,8 @@ export declare class DshAntigravityService {
     private projectRoot;
     private isInitializing;
     private initError;
+    private currentAuthUrl;
+    private authUrlListeners;
     private notificationListeners;
     constructor(config?: AntigravityPluginConfig);
     /**
@@ -30,6 +32,7 @@ export declare class DshAntigravityService {
         initialized: boolean;
         isInitializing: boolean;
         isLoggedIn: boolean;
+        authUrl: string | null;
         error: string | null;
         defaultModel: string;
         permissionMode: import("./types.js").PermissionMode;
@@ -40,12 +43,16 @@ export declare class DshAntigravityService {
     isLoggedIn(): boolean;
     /**
      * Triggers official browser OAuth login.
+     * Resolves immediately with the authUrl when captured, without blocking UI.
      */
-    login(): Promise<void>;
+    login(): Promise<{
+        authUrl: string | null;
+        isLoggedIn: boolean;
+    }>;
     /**
-     * Logs out from Antigravity.
+     * Logs out from Antigravity and kills the background server.
      */
-    logout(): void;
+    logout(): Promise<void>;
     /**
      * Creates an active agent session in target directory.
      */

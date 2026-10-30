@@ -18,6 +18,8 @@ export class DshAntigravityService {
     projectRoot;
     isInitializing = false;
     initError = null;
+    currentAuthUrl = null;
+    authUrlListeners = new Set();
     notificationListeners = new Map();
     constructor(config = {}) {
         this.config = config;
@@ -38,6 +40,15 @@ export class DshAntigravityService {
         try {
             const runtime = await ensureAntigravityServer(this.projectRoot, onProgress);
             this.client = new AntigravityAcpClient(runtime.serverPath, runtime.args, {
+                onAuthUrl: (url) => {
+                    this.currentAuthUrl = url;
+                    for (const listener of this.authUrlListeners) {
+                        try {
+                            listener(url);
+                        }
+                        catch { }
+                    }
+                },
                 onNotification: (notice) => {
                     for (const listener of this.notificationListeners.values()) {
                         try {
@@ -75,6 +86,7 @@ export class DshAntigravityService {
             initialized: Boolean(this.client),
             isInitializing: this.isInitializing,
             isLoggedIn: this.isLoggedIn(),
+            authUrl: this.currentAuthUrl,
             error: this.initError,
             defaultModel: this.config.defaultModel || "gemini-3.8-flash",
             permissionMode: this.config.permissionMode || "yolo",
@@ -88,20 +100,52 @@ export class DshAntigravityService {
     }
     /**
      * Triggers official browser OAuth login.
+     * Resolves immediately with the authUrl when captured, without blocking UI.
      */
     async login() {
+        if (this.isLoggedIn()) {
+            return { authUrl: null, isLoggedIn: true };
+        }
         if (!this.client) {
             await this.initialize();
         }
-        if (this.client) {
-            await this.client.authenticate();
-        }
+        if (!this.client)
+            throw new Error("Failed to initialize Antigravity client.");
+        const urlPromise = new Promise((resolve) => {
+            if (this.currentAuthUrl) {
+                return resolve(this.currentAuthUrl);
+            }
+            const listener = (url) => {
+                this.authUrlListeners.delete(listener);
+                clearTimeout(timer);
+                resolve(url);
+            };
+            this.authUrlListeners.add(listener);
+            const timer = setTimeout(() => {
+                this.authUrlListeners.delete(listener);
+                resolve(this.currentAuthUrl);
+            }, 5000);
+        });
+        // Run authentication asynchronously without blocking
+        this.client.authenticate().catch((err) => {
+            console.error("[antigravity-acp] authentication process rejected:", err);
+        });
+        const authUrl = await urlPromise;
+        return { authUrl, isLoggedIn: this.isLoggedIn() };
     }
     /**
-     * Logs out from Antigravity.
+     * Logs out from Antigravity and kills the background server.
      */
-    logout() {
+    async logout() {
         clearLocalCredentials();
+        this.currentAuthUrl = null;
+        if (this.client) {
+            try {
+                await this.client.stop();
+            }
+            catch { }
+            this.client = null;
+        }
     }
     /**
      * Creates an active agent session in target directory.
@@ -312,12 +356,12 @@ export function apply(ctx, config = {}) {
                                 return;
                             }
                             if (pathname === "/antigravity/login") {
-                                await service.login();
-                                send(200, service.getStatus());
+                                const loginResult = await service.login();
+                                send(200, { ...service.getStatus(), ...loginResult });
                                 return;
                             }
                             if (pathname === "/antigravity/logout") {
-                                service.logout();
+                                await service.logout();
                                 send(200, service.getStatus());
                                 return;
                             }
