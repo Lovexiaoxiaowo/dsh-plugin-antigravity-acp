@@ -345,32 +345,98 @@ export class DshAntigravityService {
 
     options?.signal?.addEventListener("abort", abortHandler, { once: true });
 
-    // Execute prompt asynchronously
-    this.prompt(acpSessionId, promptText)
-      .then((response: any) => {
-        this.sessionManager.incrementMessageCount(dshSessionId);
+    const handleSuccess = (response: any) => {
+      this.sessionManager.incrementMessageCount(dshSessionId);
 
-        // Extract token usage from meta.quota if available
-        const quota = response?._meta?.quota;
-        const tokens = quota?.token_count || response?.usage;
-        if (tokens) {
-          const recorded = this.sessionManager.recordUsage(dshSessionId, {
-            inputTokens: Number(tokens.input_tokens || tokens.inputTokens || 0),
-            outputTokens: Number(tokens.output_tokens || tokens.outputTokens || 0),
-            reasoningTokens: Number(tokens.thought_tokens || tokens.thoughtTokens || 0),
-            cachedTokens: Number(tokens.cached_tokens || tokens.cachedReadTokens || 0),
-          });
-          writer.writeUsage(recorded);
+      // Extract token usage from meta.quota if available
+      const quota = response?._meta?.quota;
+      const tokens = quota?.token_count || response?.usage;
+      if (tokens) {
+        const recorded = this.sessionManager.recordUsage(dshSessionId, {
+          inputTokens: Number(tokens.input_tokens || tokens.inputTokens || 0),
+          outputTokens: Number(tokens.output_tokens || tokens.outputTokens || 0),
+          reasoningTokens: Number(tokens.thought_tokens || tokens.thoughtTokens || 0),
+          cachedTokens: Number(tokens.cached_tokens || tokens.cachedReadTokens || 0),
+        });
+        writer.writeUsage(recorded);
+      }
+
+      writer.finish("stop");
+      pushItem({ done: true });
+    };
+
+    // Execute prompt asynchronously with resilient auto-recovery
+    const executePrompt = async () => {
+      let currentAcpSessionId = acpSessionId!;
+      try {
+        const response = await this.prompt(currentAcpSessionId, promptText);
+        handleSuccess(response);
+      } catch (err: any) {
+        if (options?.signal?.aborted) {
+          writer.finish("stop");
+          pushItem({ done: true });
+          return;
         }
 
-        writer.finish("stop");
-        pushItem({ done: true });
-      })
-      .catch((err: any) => {
-        // If error indicates session invalid/not found, remove binding for next retry
+        const errMsg = String(err?.message || err?.data?.details || err?.details || err);
+        const isSessionError =
+          errMsg.includes("Session not found") ||
+          errMsg.includes("not found") ||
+          errMsg.includes("Internal error") ||
+          err?.code === -32603;
+
+        if (isSessionError) {
+          console.warn(
+            `[antigravity-acp] Active session ${currentAcpSessionId} is obsolete or not found (${errMsg}). Auto-recreating and retrying with full context...`
+          );
+
+          try {
+            // 1. Purge stale session
+            this.sessionManager.removeBinding(dshSessionId);
+
+            // 2. Initialize fresh session
+            const newRes = await this.createSession(cwd, { model, reasoningEffort });
+            currentAcpSessionId = newRes.sessionId;
+            acpSessionId = currentAcpSessionId;
+            this.sessionManager.saveBinding({
+              dshSessionId,
+              acpSessionId: currentAcpSessionId,
+              cwd,
+              model,
+              reasoningEffort,
+              lastActive: Date.now(),
+              messageCount: 0,
+            });
+
+            // 3. Reconstruct full context prompt so the conversation continues seamlessly
+            let recoveredPrompt = "";
+            if (typeof input === "string") {
+              recoveredPrompt = input;
+            } else if (Array.isArray(input)) {
+              recoveredPrompt = this.sessionManager.formatPromptWithHistory(input, true);
+            }
+
+            console.log(`[antigravity-acp] Retrying with fresh session ${currentAcpSessionId}...`);
+            const retryResponse = await this.prompt(currentAcpSessionId, recoveredPrompt);
+            handleSuccess(retryResponse);
+            return;
+          } catch (retryErr: any) {
+            console.error(`[antigravity-acp] Session auto-recovery retry failed:`, retryErr);
+            this.sessionManager.removeBinding(dshSessionId);
+            pushItem({ error: retryErr });
+            return;
+          }
+        }
+
+        // Non-session error: remove binding and report
         this.sessionManager.removeBinding(dshSessionId);
         pushItem({ error: err });
-      });
+      }
+    };
+
+    executePrompt().catch((unexpectedErr) => {
+      pushItem({ error: unexpectedErr });
+    });
 
     try {
       while (true) {

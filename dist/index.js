@@ -306,9 +306,7 @@ export class DshAntigravityService {
             pushItem({ done: true });
         };
         options?.signal?.addEventListener("abort", abortHandler, { once: true });
-        // Execute prompt asynchronously
-        this.prompt(acpSessionId, promptText)
-            .then((response) => {
+        const handleSuccess = (response) => {
             this.sessionManager.incrementMessageCount(dshSessionId);
             // Extract token usage from meta.quota if available
             const quota = response?._meta?.quota;
@@ -324,11 +322,70 @@ export class DshAntigravityService {
             }
             writer.finish("stop");
             pushItem({ done: true });
-        })
-            .catch((err) => {
-            // If error indicates session invalid/not found, remove binding for next retry
-            this.sessionManager.removeBinding(dshSessionId);
-            pushItem({ error: err });
+        };
+        // Execute prompt asynchronously with resilient auto-recovery
+        const executePrompt = async () => {
+            let currentAcpSessionId = acpSessionId;
+            try {
+                const response = await this.prompt(currentAcpSessionId, promptText);
+                handleSuccess(response);
+            }
+            catch (err) {
+                if (options?.signal?.aborted) {
+                    writer.finish("stop");
+                    pushItem({ done: true });
+                    return;
+                }
+                const errMsg = String(err?.message || err?.data?.details || err?.details || err);
+                const isSessionError = errMsg.includes("Session not found") ||
+                    errMsg.includes("not found") ||
+                    errMsg.includes("Internal error") ||
+                    err?.code === -32603;
+                if (isSessionError) {
+                    console.warn(`[antigravity-acp] Active session ${currentAcpSessionId} is obsolete or not found (${errMsg}). Auto-recreating and retrying with full context...`);
+                    try {
+                        // 1. Purge stale session
+                        this.sessionManager.removeBinding(dshSessionId);
+                        // 2. Initialize fresh session
+                        const newRes = await this.createSession(cwd, { model, reasoningEffort });
+                        currentAcpSessionId = newRes.sessionId;
+                        acpSessionId = currentAcpSessionId;
+                        this.sessionManager.saveBinding({
+                            dshSessionId,
+                            acpSessionId: currentAcpSessionId,
+                            cwd,
+                            model,
+                            reasoningEffort,
+                            lastActive: Date.now(),
+                            messageCount: 0,
+                        });
+                        // 3. Reconstruct full context prompt so the conversation continues seamlessly
+                        let recoveredPrompt = "";
+                        if (typeof input === "string") {
+                            recoveredPrompt = input;
+                        }
+                        else if (Array.isArray(input)) {
+                            recoveredPrompt = this.sessionManager.formatPromptWithHistory(input, true);
+                        }
+                        console.log(`[antigravity-acp] Retrying with fresh session ${currentAcpSessionId}...`);
+                        const retryResponse = await this.prompt(currentAcpSessionId, recoveredPrompt);
+                        handleSuccess(retryResponse);
+                        return;
+                    }
+                    catch (retryErr) {
+                        console.error(`[antigravity-acp] Session auto-recovery retry failed:`, retryErr);
+                        this.sessionManager.removeBinding(dshSessionId);
+                        pushItem({ error: retryErr });
+                        return;
+                    }
+                }
+                // Non-session error: remove binding and report
+                this.sessionManager.removeBinding(dshSessionId);
+                pushItem({ error: err });
+            }
+        };
+        executePrompt().catch((unexpectedErr) => {
+            pushItem({ error: unexpectedErr });
         });
         try {
             while (true) {
