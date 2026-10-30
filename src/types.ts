@@ -106,7 +106,14 @@ export interface SessionQuotaSnapshot {
 export type AcpActivity =
   | { type: "text"; delta: string }
   | { type: "thought"; delta: string }
-  | { type: "tool"; text: string }
+  | {
+      type: "tool";
+      text: string;
+      toolCallId?: string;
+      name?: string;
+      args?: string;
+      isStart?: boolean;
+    }
   | { type: "plan"; text: string }
   | { type: "usage"; usage: TokenAccounting }
   | { type: "unknown"; updateType: string };

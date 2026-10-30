@@ -14,10 +14,14 @@ export declare class DshStreamWriter {
     private reasoningBuffer;
     private textBuffer;
     private hasEnded;
+    private blockIndex;
+    private activeToolCalls;
     constructor(pushChunk: (chunk: any) => void);
     ensureReasoningOpen(): void;
     writeThinking(text: string): void;
     closeReasoningBlock(): void;
+    writeToolCallStart(id: string, name: string, args?: string): void;
+    writeToolCallEnd(id: string, name: string, args?: string): void;
     ensureTextOpen(): void;
     writeText(text: string): void;
     closeTextBlock(): void;

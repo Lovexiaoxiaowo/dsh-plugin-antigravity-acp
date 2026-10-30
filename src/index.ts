@@ -323,9 +323,18 @@ export class DshAntigravityService {
       for (const activity of activities) {
         if (activity.type === "thought") {
           writer.writeThinking(activity.delta);
-        } else if (activity.type === "tool" || activity.type === "plan") {
-          // Format tool activity and plan into thinking stream so it appears in the trace UI
+        } else if (activity.type === "plan") {
           writer.writeThinking(activity.text);
+        } else if (activity.type === "tool") {
+          // 1. Write formatted visual text into thinking stream for rich UI display
+          writer.writeThinking(activity.text);
+
+          // 2. Emit native DSH tool-call blocks so DSH track counters record real tool counts
+          if (activity.isStart && activity.toolCallId) {
+            writer.writeToolCallStart(activity.toolCallId, activity.name || "antigravity-tool", activity.args || "{}");
+          } else if (activity.toolCallId) {
+            writer.writeToolCallEnd(activity.toolCallId, activity.name || "antigravity-tool", activity.args || "{}");
+          }
         } else if (activity.type === "text") {
           writer.writeText(activity.delta);
         } else if (activity.type === "usage") {

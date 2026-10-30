@@ -49,17 +49,26 @@ export function mapSessionUpdate(notification: SessionNotification): AcpActivity
     }
 
     case "tool_call": {
+      const toolId = String(update.toolCallId || `tool-${Date.now()}`);
+      const toolName = clean(update.name || update.title || "antigravity-tool");
       const title = clean(update.title || update.name || update.toolCallId || "未知工具");
       const status = update.status ? ` — ${update.status}` : " — 执行中";
+      const argsStr = typeof update.arguments === "string" ? update.arguments : JSON.stringify(update.arguments || {});
       return [
         {
           type: "tool",
           text: `\n🛠️ **[Antigravity 工具执行]** ${title}${status}\n`,
+          toolCallId: toolId,
+          name: toolName,
+          args: argsStr,
+          isStart: true,
         },
       ];
     }
 
     case "tool_call_update": {
+      const toolId = String(update.toolCallId || "");
+      const toolName = clean(update.name || update.title || "antigravity-tool");
       const title = clean(update.title || update.name || update.toolCallId || "工具进度");
       const status = update.status ? ` — ${update.status}` : "";
       const details = formatToolContent(update.content);
@@ -68,6 +77,9 @@ export function mapSessionUpdate(notification: SessionNotification): AcpActivity
         {
           type: "tool",
           text: `\n⚡ **[Antigravity 工具更新]** ${title}${status}${detailSection}\n`,
+          toolCallId: toolId,
+          name: toolName,
+          isStart: false,
         },
       ];
     }
@@ -124,6 +136,8 @@ export class DshStreamWriter {
   private reasoningBuffer = "";
   private textBuffer = "";
   private hasEnded = false;
+  private blockIndex = 0;
+  private activeToolCalls = new Map<string, { index: number; name: string }>();
 
   constructor(private readonly pushChunk: (chunk: any) => void) {}
 
@@ -163,6 +177,44 @@ export class DshStreamWriter {
       });
       this.currentBlock = "none";
     }
+  }
+
+  writeToolCallStart(id: string, name: string, args: string = "{}"): void {
+    if (this.hasEnded) return;
+    const index = ++this.blockIndex;
+    this.activeToolCalls.set(id, { index, name });
+
+    this.pushChunk({
+      type: "block-start",
+      index,
+      blockType: "tool-call",
+    });
+
+    this.pushChunk({
+      type: "tool-call-delta",
+      index,
+      id,
+      name,
+      argumentsDelta: args || "{}",
+    });
+  }
+
+  writeToolCallEnd(id: string, name: string, args: string = "{}"): void {
+    if (this.hasEnded) return;
+    const entry = this.activeToolCalls.get(id);
+    const index = entry ? entry.index : ++this.blockIndex;
+    this.activeToolCalls.delete(id);
+
+    this.pushChunk({
+      type: "block-end",
+      index,
+      block: {
+        type: "tool-call",
+        id,
+        name: name || entry?.name || "antigravity-tool",
+        arguments: args || "{}",
+      },
+    });
   }
 
   ensureTextOpen(): void {
@@ -220,6 +272,22 @@ export class DshStreamWriter {
     if (this.hasEnded) return;
     this.closeReasoningBlock();
     this.closeTextBlock();
+
+    // Close any lingering active tool calls
+    for (const [id, entry] of this.activeToolCalls.entries()) {
+      this.pushChunk({
+        type: "block-end",
+        index: entry.index,
+        block: {
+          type: "tool-call",
+          id,
+          name: entry.name,
+          arguments: "{}",
+        },
+      });
+    }
+    this.activeToolCalls.clear();
+
     this.hasEnded = true;
     this.pushChunk({
       type: "finish",

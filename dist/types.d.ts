@@ -97,6 +97,10 @@ export type AcpActivity = {
 } | {
     type: "tool";
     text: string;
+    toolCallId?: string;
+    name?: string;
+    args?: string;
+    isStart?: boolean;
 } | {
     type: "plan";
     text: string;

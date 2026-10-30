@@ -516,6 +516,8 @@ window.__ModuleLoader__.load({
           : h(
               'div',
               {
+                onMouseEnter: handleMouseEnter,
+                onMouseLeave: handleMouseLeave,
                 style: {
                   position: 'absolute',
                   bottom: 'calc(100% + 8px)',
@@ -603,6 +605,32 @@ window.__ModuleLoader__.load({
                       '下次重置: ' + quota.resetCountdown
                     )
                   : null
+              ),
+              // Quota Rolling Mechanism explanation card
+              h(
+                'div',
+                {
+                  style: {
+                    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(59, 130, 246, 0.2)',
+                    marginBottom: '10px',
+                    fontSize: '10px',
+                    lineHeight: '1.4',
+                  },
+                },
+                h(
+                  'div',
+                  { style: { fontWeight: '600', color: '#60a5fa', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '4px' } },
+                  '⏱️ 额度恢复周期说明'
+                ),
+                h(
+                  'div',
+                  { style: { opacity: 0.85 } },
+                  'Google 个人版采用 5小时动态滑动窗口机制（随时间平滑滚动恢复，非固定自然周限额）。下次重置：' +
+                    ((quota && quota.resetCountdown) ? quota.resetCountdown : '计算中')
+                )
               ),
               // Context window usage section
               h(
@@ -732,7 +760,16 @@ window.__ModuleLoader__.load({
               )
             )
 
-        return h('div', { style: { position: 'relative', display: 'inline-flex', alignItems: 'center' } }, pill, popover)
+        return h(
+          'div',
+          {
+            style: { position: 'relative', display: 'inline-flex', alignItems: 'center' },
+            onMouseEnter: handleMouseEnter,
+            onMouseLeave: handleMouseLeave,
+          },
+          pill,
+          popover
+        )
       }
     }
 

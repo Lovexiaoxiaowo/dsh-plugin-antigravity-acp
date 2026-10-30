@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.7-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.8-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -25,7 +25,10 @@
 
 ## 特性
 
-- **输入框模型旁额度与 Context 看板**：在聊天窗口底部模型选择框左侧常驻展示额度胶囊（`⚡ 5h 95% | 上下文 7.2%`），点击可展开 Popover 浮层，实时查看 Google 官方 5 小时滑动窗口额度、重置倒计时、1M 上下文占用比例条，以及本次会话的输入/输出/思考 Token 记账。
+- **输入框模型旁额度与 Context 看板**：在聊天窗口底部模型选择框左侧常驻展示额度胶囊（`⚡ 5h 95% | 上下文 7.2%`），悬停自动展开 Popover 浮层，鼠标移出 300ms 平滑隐藏，避免遮挡聊天输入区。
+- **5 小时滚动周期与倒计时**：清晰呈现 Google 官方独特的 5 小时动态滑动窗口（5-Hour Rolling Window）机制与精准重置倒计时，解除周重置误解。
+- **1M 上下文占用与超限告警**：基于 Gemini 3.8 Flash 的 1,048,576 Token 上限，实时计算已占比例；当超过 75% 时主动呈现高危黄色/红色警示卡片，提醒及时归档或压缩会话。
+- **DSH 轨迹原生工具调用发射**：重构流式事件映射器，完整实现 DSH 官方原生的 `block-start` (`blockType: 'tool-call'`)、`tool-call-delta` 与 `block-end` 协议，彻底解决 DSH 轨迹看板中「0 工具调用」统计缺失的问题，工具名与参数清晰可查。
 - **ACP 轨迹跟踪与思维链**：将 ACP 运行时的思考过程（Reasoning Delta）、工具执行（Tool Calls）、代码补丁（Diff）与计划（Plan）完整映射并流入 DSH 思考链与轨迹面板，调试排错一目了然。
 - **上下文自动保全与系统时间戳穿透**：智能识别并穿透 DSH 系统注入消息（如 `@deepseek-ai/dsh-time-context` 时间戳），精准提纯用户真实提问，彻底解决多轮对话历史丢失或答非所问问题。
 - **跨进程会话失效透明自愈（Auto-Recovery）**：当遇到 DSH 客户端退出重启、服务重启或服务端 Session 过期（`Session not found / code: -32603`）时，自动静默创建新会话并打包前序历史完成重试，无感自愈，彻底杜绝 `Internal error` 报错。
@@ -33,6 +36,23 @@
 - **自动下载官方运行时**：无需手动安装 Python、GCC 或配置编译环境。首次运行时自动识别系统（Windows / macOS / Linux），从 Google 官方 CDN 下载对应架构的 `agy_acp_server` 并校验 SHA256。
 - **官方 OAuth 2.0 个人授权**：支持 ACP `oauth-personal` 流程。点击登录后调用系统默认浏览器打开 Google 官方页面授权，无需手动抓取 Cookie 或填写 API Key，插件不接触账号密码明文。
 - **本地存储与隐私安全**：无第三方中转服务器，无遥测埋点。授权凭证仅保存在本机 `~/.gemini/antigravity-acp/` 目录，请求由本地进程直连 Google 官方接口。
+
+---
+
+## 版本更新日志 (Changelog)
+
+### v1.0.8 (2026-10-30)
+- **工具调用原生轨迹发射**：重构 `DshStreamWriter`，实现官方 `blockType: 'tool-call'` 结构化流式发射，修复 DSH 轨迹看板中工具调用显示为 0、无详细工具名和参数的问题。
+- **浮层交互易用性提升**：浮窗支持鼠标离开 300ms 后平滑自动隐藏；底栏胶囊支持悬停自动展开，彻底杜绝浮窗遮挡聊天发送区域。
+- **额度恢复机制详解**：浮窗新增「Google 5 小时动态滑动窗口（5-Hour Rolling Window）」机制卡片与实时重置倒计时，明确非自然周重置规则。
+- **1M 上下文超限健康预警**：当单会话上下文突破 75%（>78万 Tokens）时主动弹出警示卡片，提示 Google API 硬顶崩溃风险与上下文压缩建议。
+
+### v1.0.7 (2026-10-30)
+- **跨进程 Session 失效透明自愈**：解决 DSH 重启或服务端过期导致的 `Session not found / code: -32603` 内部错误。
+- **时间戳穿透与历史净化**：穿透 `@deepseek-ai/dsh-time-context` 注入的消息并纯化真实上下文。
+
+### v1.0.6 (2026-10-30)
+- **输入框模型旁额度与 Context 看板**：首发常驻底栏胶囊，展示 5h 额度、1M 上下文占用比例与输入/输出/思考 Token 记账。
 
 ---
 
