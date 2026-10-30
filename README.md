@@ -76,6 +76,23 @@ flowchart LR
 
 ---
 
+## 🛡️ 账号安全与合规保障（无需担心账号/封号风险）
+
+本项目在技术选型与工程实现上严格遵从 Google 官方规范，与市面上“爬虫逆向、抓取网页 Cookie、伪造设备指纹”的非正规方式有**本质区别**：
+
+1. **官方构建与签名运行时（Official CDN Binary）**
+   - 插件底层调用的 `agy_acp_server` 是 Google 官方发布的正规运行时，直接从 Google 官方分发节点（`https://dl.google.com/agy-extensions/...`）拉取，并经过本地 SHA256 完整性严格校验，非破解或修改版。
+2. **官方正规 OAuth 2.0 个人授权（Personal App Auth）**
+   - 授权登录直接调用系统默认浏览器打开 Google 官方安全域（`accounts.google.com`），用户密码与两步验证全程在 Google 官方沙箱中进行，**插件完全接触不到您的密码明文**。
+   - 账号在 Google 后台记录为正常的官方授权应用，杜绝非授权盗刷与风控封号隐患。
+3. **基于 Google 官方 ACP 标准协议（Agent Client Protocol）**
+   - 核心通信直接基于官方 `@agentclientprotocol/sdk`。ACP 是 Google 专为现代 IDE 与智能体客户端制定的开放互操作协议（地位类似于微语言服务协议 LSP），属于官方鼓励与支持的标准接入形态。
+4. **零第三方服务器，凭据纯本地沙箱保存（100% 隐私安全）**
+   - 本插件**绝无任何自建后端中转服务器**，无任何埋点遥测（Telemetry）、日志收集或第三方 Webhook。
+   - 授权凭证仅保存在本机安全目录（`~/.gemini/antigravity-acp/acp_token.json`），大模型对话请求全程由本地进程直连 Google 官方 API。
+
+---
+
 ## ❓ 常见问题排查（FAQ）
 
 ### Q1：安装或更新后，为什么聊天窗口还没显示新模型/设置没刷新？
