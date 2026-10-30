@@ -21,9 +21,12 @@ export class DshAntigravityService {
     currentAuthUrl = null;
     authUrlListeners = new Set();
     notificationListeners = new Map();
+    wasLoggedIn = false;
+    onAuthChange;
     constructor(config = {}) {
         this.config = config;
         this.projectRoot = path.resolve(import.meta.dirname, "..");
+        this.wasLoggedIn = this.isLoggedIn();
     }
     /**
      * Initializes the service:
@@ -82,10 +85,15 @@ export class DshAntigravityService {
      * Status information queryable by DSH UI
      */
     getStatus() {
+        const loggedIn = this.isLoggedIn();
+        if (loggedIn !== this.wasLoggedIn) {
+            this.wasLoggedIn = loggedIn;
+            this.onAuthChange?.();
+        }
         return {
             initialized: Boolean(this.client),
             isInitializing: this.isInitializing,
-            isLoggedIn: this.isLoggedIn(),
+            isLoggedIn: loggedIn,
             authUrl: this.currentAuthUrl,
             error: this.initError,
             defaultModel: this.config.defaultModel || "gemini-3.8-flash",
@@ -146,6 +154,7 @@ export class DshAntigravityService {
             catch { }
             this.client = null;
         }
+        this.onAuthChange?.();
     }
     /**
      * Creates an active agent session in target directory.
@@ -404,7 +413,14 @@ export function apply(ctx, config = {}) {
                 const llm = scope.llm;
                 if (typeof llm?.registerAdapter === "function") {
                     const providerId = "google-antigravity";
-                    llm.registerAdapter([providerId], {
+                    let adapterHandle = null;
+                    service.onAuthChange = () => {
+                        try {
+                            adapterHandle?.replace([providerId]);
+                        }
+                        catch { }
+                    };
+                    adapterHandle = llm.registerAdapter([providerId], {
                         providerInfo(provider) {
                             return { id: provider, name: "Google Antigravity" };
                         },
@@ -415,10 +431,6 @@ export function apply(ctx, config = {}) {
                             return undefined;
                         },
                         async listModels(provider) {
-                            // 关键逻辑：未登录 Google 账号前，模型列表返回空，不在聊天窗口暴露
-                            if (!service.isLoggedIn()) {
-                                return [];
-                            }
                             return [
                                 {
                                     id: "gemini-3.8-flash",
@@ -438,8 +450,8 @@ export function apply(ctx, config = {}) {
                                 inputModalities: ["text"],
                                 context: {
                                     contextWindow: 1_000_000,
-                                    maxTokens: 65_536,
                                 },
+                                defaultMaxTokens: 65_536,
                                 reasoning: {
                                     efforts: [
                                         { id: "low", name: "Low" },

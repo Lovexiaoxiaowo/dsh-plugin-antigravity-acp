@@ -3,7 +3,7 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **DeepSeek Harness (DSH) 官方标准第三方插件**：基于标准 **ACP (Agent Client Protocol)** 协议直接连接 Google 官方的 **Antigravity 运行时**，为 DSH 用户带来开箱即用的 **Google Gemini 3.8 Flash** 官方大模型与顶配 Agent 智能体编程体验。
+> **DeepSeek Harness (DSH) 插件**：通过标准 **ACP (Agent Client Protocol)** 协议连接 Google **Antigravity 运行时**，为 DSH 提供开箱即用的 **Google Gemini** 模型调用与代码辅助能力。
 
 ---
 

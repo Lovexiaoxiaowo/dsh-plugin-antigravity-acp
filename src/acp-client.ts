@@ -66,7 +66,6 @@ export class AntigravityAcpClient {
       if (match) {
         const url = match[0];
         this.handlers.onAuthUrl?.(url);
-        openUrlInBrowser(url);
       }
     });
 

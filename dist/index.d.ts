@@ -18,6 +18,8 @@ export declare class DshAntigravityService {
     private currentAuthUrl;
     private authUrlListeners;
     private notificationListeners;
+    private wasLoggedIn;
+    onAuthChange?: () => void;
     constructor(config?: AntigravityPluginConfig);
     /**
      * Initializes the service:

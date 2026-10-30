@@ -24,9 +24,12 @@ export class DshAntigravityService {
   private currentAuthUrl: string | null = null;
   private authUrlListeners = new Set<(url: string) => void>();
   private notificationListeners = new Map<string, (notice: any) => void>();
+  private wasLoggedIn = false;
+  public onAuthChange?: () => void;
 
   constructor(private readonly config: AntigravityPluginConfig = {}) {
     this.projectRoot = path.resolve(import.meta.dirname, "..");
+    this.wasLoggedIn = this.isLoggedIn();
   }
 
   /**
@@ -86,10 +89,15 @@ export class DshAntigravityService {
    * Status information queryable by DSH UI
    */
   getStatus() {
+    const loggedIn = this.isLoggedIn();
+    if (loggedIn !== this.wasLoggedIn) {
+      this.wasLoggedIn = loggedIn;
+      this.onAuthChange?.();
+    }
     return {
       initialized: Boolean(this.client),
       isInitializing: this.isInitializing,
-      isLoggedIn: this.isLoggedIn(),
+      isLoggedIn: loggedIn,
       authUrl: this.currentAuthUrl,
       error: this.initError,
       defaultModel: this.config.defaultModel || "gemini-3.8-flash",
@@ -156,6 +164,7 @@ export class DshAntigravityService {
       } catch {}
       this.client = null;
     }
+    this.onAuthChange?.();
   }
 
   /**
@@ -431,7 +440,15 @@ export function apply(ctx: any, config: AntigravityPluginConfig = {}) {
         const llm = scope.llm;
         if (typeof llm?.registerAdapter === "function") {
           const providerId = "google-antigravity";
-          llm.registerAdapter([providerId], {
+          let adapterHandle: any = null;
+
+          service.onAuthChange = () => {
+            try {
+              adapterHandle?.replace([providerId]);
+            } catch {}
+          };
+
+          adapterHandle = llm.registerAdapter([providerId], {
             providerInfo(provider: string) {
               return { id: provider, name: "Google Antigravity" };
             },
@@ -442,10 +459,6 @@ export function apply(ctx: any, config: AntigravityPluginConfig = {}) {
               return undefined;
             },
             async listModels(provider: string) {
-              // 关键逻辑：未登录 Google 账号前，模型列表返回空，不在聊天窗口暴露
-              if (!service.isLoggedIn()) {
-                return [];
-              }
               return [
                 {
                   id: "gemini-3.8-flash",
@@ -465,8 +478,8 @@ export function apply(ctx: any, config: AntigravityPluginConfig = {}) {
                 inputModalities: ["text"],
                 context: {
                   contextWindow: 1_000_000,
-                  maxTokens: 65_536,
                 },
+                defaultMaxTokens: 65_536,
                 reasoning: {
                   efforts: [
                     { id: "low", name: "Low" },

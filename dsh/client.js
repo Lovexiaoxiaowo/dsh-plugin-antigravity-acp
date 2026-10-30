@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
         var loading = loadingState[0]
         var setLoading = loadingState[1]
 
-        var promptState = react.useState('请用一段简洁的中文介绍 Google Gemini 3.8 Flash 在 Agent 编码场景下的核心优势')
+        var promptState = react.useState('写一个快速排序算法并说明时间复杂度')
         var promptText = promptState[0]
         var setPromptText = promptState[1]
 
@@ -50,13 +50,6 @@ window.__ModuleLoader__.load({
             .then((data) => {
               setStatus(data)
               setLoading(false)
-              if (data.authUrl && !data.isLoggedIn) {
-                try {
-                  window.open(data.authUrl, '_blank')
-                } catch (e) {
-                  console.error('[antigravity-acp] window.open blocked', e)
-                }
-              }
             })
             .catch((err) => {
               alert('登录出错: ' + (err.message || String(err)))
@@ -199,7 +192,7 @@ window.__ModuleLoader__.load({
                     lineHeight: '1.5',
                   },
                 },
-                '基于 Google Antigravity ACP 官方协议，自举驱动 Gemini 3.8 Flash / 3.1 Pro 顶配 Agent 代码智能体。'
+                '连接 Google Antigravity 本地服务，支持在 DSH 中直接调用 Gemini 模型。'
               ),
               h(
                 'div',
@@ -227,8 +220,8 @@ window.__ModuleLoader__.load({
                       },
                     },
                     status?.isLoggedIn
-                      ? '已就绪 (本地 OAuth Token 有效，可直接调用 Gemini)'
-                      : '未连接 (请点击右侧按钮在浏览器完成个人授权)'
+                      ? '已就绪（本地凭据有效，可直接调用）'
+                      : '未连接（请在浏览器中完成 Google 账号授权）'
                   )
                 ),
                 status?.isLoggedIn
@@ -316,7 +309,7 @@ window.__ModuleLoader__.load({
                     marginTop: '4px',
                   },
                 },
-                h('div', { style: { fontWeight: 500 } }, '🚀 即时大模型测试调用 (Gemini 3.8 Flash)'),
+                h('div', { style: { fontWeight: 500 } }, '即时调用测试 (Gemini 3.8 Flash)'),
                 h('textarea', {
                   value: promptText,
                   onChange: (e) => setPromptText(e.target.value),
@@ -353,7 +346,7 @@ window.__ModuleLoader__.load({
                         fontSize: '12px',
                       },
                     },
-                    loading ? '正在生成响应...' : '发送测试调用'
+                    loading ? '正在生成响应...' : '发送测试'
                   ),
                   h(
                     'button',
