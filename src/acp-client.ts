@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
+  ndJsonStream,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
@@ -48,8 +49,9 @@ export class AntigravityAcpClient {
       throw new Error("Failed to attach stdio pipes to Antigravity ACP process.");
     }
 
-    const inputStream = this.childProcess.stdout;
-    const outputStream = this.childProcess.stdin;
+    const input = Writable.toWeb(this.childProcess.stdin) as unknown as WritableStream<Uint8Array>;
+    const output = Readable.toWeb(this.childProcess.stdout) as unknown as ReadableStream<Uint8Array>;
+    const stream = ndJsonStream(input, output);
 
     // Create ACP client connection
     this.connection = new ClientSideConnection(
@@ -69,10 +71,7 @@ export class AntigravityAcpClient {
           this.handlers.onNotification?.(notice);
         },
       }),
-      {
-        read: inputStream,
-        write: outputStream,
-      } as any
+      stream
     );
 
     // Protocol handshake

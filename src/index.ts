@@ -9,15 +9,19 @@ export * from "./bootstrapper.js";
 export * from "./auth.js";
 export * from "./acp-client.js";
 
+export const name = "dsh-plugin-antigravity-acp";
+export const inject = [];
+
 /**
  * Main Service class for DSH Integration.
- * Fits into DeepSeek Harness (DSH) lifecycle, Cordis service architecture, or standalone CLI usage.
+ * Fits into DeepSeek Harness (DSH) lifecycle, Cordis service architecture, or standalone usage.
  */
 export class DshAntigravityService {
   private client: AntigravityAcpClient | null = null;
   private projectRoot: string;
   private isInitializing = false;
   private initError: string | null = null;
+  private notificationListeners = new Map<string, (notice: any) => void>();
 
   constructor(private readonly config: AntigravityPluginConfig = {}) {
     this.projectRoot = path.resolve(import.meta.dirname, "..");
@@ -40,7 +44,13 @@ export class DshAntigravityService {
 
       this.client = new AntigravityAcpClient(runtime.serverPath, runtime.args, {
         onNotification: (notice) => {
-          // Broadcast updates
+          for (const listener of this.notificationListeners.values()) {
+            try {
+              listener(notice);
+            } catch (err) {
+              console.error("[antigravity-acp] notification listener error:", err);
+            }
+          }
         },
         onRequestPermission: async (req) => {
           const allowOption =
@@ -129,12 +139,53 @@ export class DshAntigravityService {
   }
 
   /**
-   * Quick completion test helper for DSH UI / chat
+   * Quick completion test helper for DSH UI / card test
    */
   async testPrompt(text: string, cwd: string = process.cwd()): Promise<string> {
     const session = await this.createSession(cwd);
-    const result = await this.prompt(session.sessionId, text);
-    return JSON.stringify(result, null, 2);
+    const collectedTexts: string[] = [];
+
+    const listenerKey = `test-${Date.now()}`;
+    this.notificationListeners.set(listenerKey, (notice) => {
+      const update = notice?.update;
+      if (!update) return;
+
+      // Extract text content from various ACP chunk shapes
+      if (typeof update === "string") {
+        collectedTexts.push(update);
+      } else if (update.sessionUpdate === "agent_message_chunk") {
+        if (typeof update.content === "string") {
+          collectedTexts.push(update.content);
+        } else if (update.content?.text) {
+          collectedTexts.push(update.content.text);
+        }
+      } else if (update.sessionUpdate === "agent_thought_chunk") {
+        const thought = update.content?.text || (typeof update.content === "string" ? update.content : "");
+        if (thought) collectedTexts.push(`[思考中] ${thought}\n`);
+      } else if (update.agent_output_chunk?.content) {
+        collectedTexts.push(update.agent_output_chunk.content);
+      } else if (update.content) {
+        if (typeof update.content === "string") {
+          collectedTexts.push(update.content);
+        } else if (update.content?.text) {
+          collectedTexts.push(update.content.text);
+        } else if (Array.isArray(update.content)) {
+          for (const item of update.content) {
+            if (item?.type === "text" && item.text) collectedTexts.push(item.text);
+          }
+        }
+      }
+    });
+
+    try {
+      const result = await this.prompt(session.sessionId, text);
+      if (collectedTexts.length > 0) {
+        return collectedTexts.join("");
+      }
+      return JSON.stringify(result, null, 2);
+    } finally {
+      this.notificationListeners.delete(listenerKey);
+    }
   }
 
   /**
@@ -151,35 +202,158 @@ export class DshAntigravityService {
 /**
  * Standard Cordis / DSH Plugin Apply Entrypoint.
  */
-export function apply(ctx: any, config: AntigravityPluginConfig) {
+export function apply(ctx: any, config: AntigravityPluginConfig = {}) {
   const service = new DshAntigravityService(config);
 
   // Expose service into DSH Context
   ctx.provide("antigravityAcp", service);
 
-  // Register remote RPC endpoints for DSH Client/UI
-  if (ctx.api) {
-    ctx.api.handle("antigravity/status", async () => {
-      return service.getStatus();
+  // 1. Settings Namespace Registration:
+  // DSH rc.7+ dispatches plugin cards by served settings namespace.
+  // Card renders in Settings -> Plugins only when its slot key matches a namespace.
+  if (typeof ctx.inject === "function") {
+    ctx.inject(["settings"], (scope: any) => {
+      try {
+        const passThrough = (value: any) => ({ ...(value ?? {}) });
+        passThrough.toJSON = () => ({
+          uid: 0,
+          refs: { 0: { type: "object", meta: { default: {} }, dict: {} } },
+        });
+        scope.settings.register("antigravity-acp", passThrough, { base: {} });
+      } catch (error) {
+        console.error(`[antigravity-acp] settings namespace registration skipped: ${error}`);
+      }
     });
+  }
 
-    ctx.api.handle("antigravity/login", async () => {
-      await service.login();
-      return service.getStatus();
+  // 2. Loopback Web Server Routes for Client UI:
+  // Browser half (client.js) calls /antigravity/* directly via fetch
+  if (typeof ctx.inject === "function") {
+    ctx.inject(["webServer"], (scope: any) => {
+      try {
+        scope.webServer.register({
+          name: "antigravity-api",
+          kind: "prefix",
+          path: "/antigravity",
+          handler: async (req: any, res: any) => {
+            const send = (status: number, body: any) => {
+              res.writeHead(status, {
+                "content-type": "application/json; charset=utf-8",
+                "access-control-allow-origin": "*",
+              });
+              res.end(JSON.stringify(body));
+            };
+
+            try {
+              const url = new URL(req.url, "http://localhost");
+              const pathname = url.pathname;
+
+              if (pathname === "/antigravity/status") {
+                send(200, service.getStatus());
+                return;
+              }
+
+              if (pathname === "/antigravity/login") {
+                await service.login();
+                send(200, service.getStatus());
+                return;
+              }
+
+              if (pathname === "/antigravity/logout") {
+                service.logout();
+                send(200, service.getStatus());
+                return;
+              }
+
+              if (pathname === "/antigravity/prompt" && req.method === "POST") {
+                let body = "";
+                req.on("data", (chunk: any) => {
+                  body += chunk;
+                });
+                req.on("end", async () => {
+                  try {
+                    const data = JSON.parse(body || "{}");
+                    const text = data.text || "";
+                    const reply = await service.testPrompt(text);
+                    send(200, { output: reply });
+                  } catch (err: any) {
+                    send(500, { error: err.message || String(err) });
+                  }
+                });
+                return;
+              }
+
+              send(404, { error: "Not found" });
+            } catch (e: any) {
+              send(500, { error: e.message || String(e) });
+            }
+          },
+        });
+      } catch (error) {
+        console.error(`[antigravity-acp] webServer route registration skipped: ${error}`);
+      }
     });
+  }
 
-    ctx.api.handle("antigravity/logout", async () => {
-      service.logout();
-      return service.getStatus();
-    });
-
-    ctx.api.handle("antigravity/init", async () => {
-      await service.initialize();
-      return service.getStatus();
-    });
-
-    ctx.api.handle("antigravity/testPrompt", async ({ text }: { text: string }) => {
-      return await service.testPrompt(text);
+  // 3. Optional LLM Adapter registration:
+  // Exposes Google Antigravity (Gemini 3.8 Flash / 3.1 Pro) in DSH model selection
+  if (typeof ctx.inject === "function") {
+    ctx.inject(["llm"], (scope: any) => {
+      try {
+        const llm = scope.llm;
+        if (typeof llm?.registerAdapter === "function") {
+          const providerId = "google-antigravity";
+          llm.registerAdapter([providerId], {
+            providerInfo(provider: string) {
+              return { id: provider, name: "Google Antigravity" };
+            },
+            providerRetryPolicy() {
+              return undefined;
+            },
+            listModels() {
+              return Promise.resolve([
+                {
+                  id: "gemini-3.8-flash",
+                  name: "Gemini 3.8 Flash (Antigravity)",
+                  description: "Google Gemini 3.8 Flash Agent model",
+                  provider: providerId,
+                  inputModalities: ["text"],
+                },
+                {
+                  id: "gemini-3.1-pro",
+                  name: "Gemini 3.1 Pro (Antigravity)",
+                  description: "Google Gemini 3.1 Pro Agent model",
+                  provider: providerId,
+                  inputModalities: ["text"],
+                },
+              ]);
+            },
+            resolveModel(provider: string, model: string) {
+              return Promise.resolve({
+                id: model,
+                name: model.includes("pro") ? "Gemini 3.1 Pro (Antigravity)" : "Gemini 3.8 Flash (Antigravity)",
+                provider,
+                inputModalities: ["text"],
+              });
+            },
+            async *stream(options: any) {
+              // Extract the user prompt from messages
+              const messages = options.messages || [];
+              const lastMsg = messages[messages.length - 1];
+              let text = "";
+              if (typeof lastMsg?.content === "string") {
+                text = lastMsg.content;
+              } else if (Array.isArray(lastMsg?.content)) {
+                text = lastMsg.content.map((c: any) => c.text || "").join("\n");
+              }
+              const output = await service.testPrompt(text || "Hello");
+              yield { type: "text", text: output };
+            },
+          });
+        }
+      } catch (error) {
+        console.error(`[antigravity-acp] llm adapter registration skipped: ${error}`);
+      }
     });
   }
 
