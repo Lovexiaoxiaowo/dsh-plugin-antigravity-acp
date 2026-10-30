@@ -7,9 +7,13 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
+    "./package.json": "./package.json",
     "./client": "./dsh/client.js"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
@@ -19,10 +23,11 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
+    "prepare": "tsc",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "dsh",
+    "dsh-plugin",
     "deepseek-harness",
     "plugin",
     "antigravity",
@@ -35,8 +40,11 @@
   "license": "MIT",
   "files": [
     "dist",
+    "dsh",
+    "cordis.patch.yml",
     "runtime-manifest.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.8.0"

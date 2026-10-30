@@ -1,0 +1,4 @@
+# dsh bundle layer: mount the antigravity-acp plugin
+- insert:
+    - id: antigravity-acp
+      name: 'dsh-plugin-antigravity-acp'
