@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.8-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.9-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,12 @@ The plugin includes a dedicated settings UI and background services. Once instal
 ---
 
 ## Changelog
+
+### v1.0.9 (2026-10-30)
+- **Fix `unknown tool` exceptions & disappearing message content**:
+  - Halted emitting unregistered `blockType: 'tool-call'` blocks to DSH scheduler; all ACP internal tools stream purely into reasoning/trace logs.
+  - Eliminated Block Index collisions in `DshStreamWriter`, preventing `index: 1` text slot from being overwritten.
+  - Resolved PTC multi-turn infinite error loops and 5M+ runaway token consumption.
 
 ### v1.0.8 (2026-10-30)
 - **Native Tool-Call Trajectory Emission**: Emits structured DSH `blockType: 'tool-call'` stream events, resolving the issue where DSH trajectory reported "0 tool calls".

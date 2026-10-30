@@ -132,30 +132,41 @@ export function mapSessionUpdate(notification: SessionNotification): AcpActivity
  * -> usage -> finish
  */
 export class DshStreamWriter {
-  private currentBlock: "none" | "reasoning" | "text" = "none";
+  private reasoningStarted = false;
+  private reasoningClosed = false;
   private reasoningBuffer = "";
+
+  private textStarted = false;
+  private textClosed = false;
   private textBuffer = "";
+
   private hasEnded = false;
-  private blockIndex = 0;
-  private activeToolCalls = new Map<string, { index: number; name: string }>();
 
   constructor(private readonly pushChunk: (chunk: any) => void) {}
 
   ensureReasoningOpen(): void {
-    if (this.currentBlock === "reasoning") return;
-    if (this.currentBlock === "text") {
-      this.closeTextBlock();
+    if (this.hasEnded || this.reasoningClosed) return;
+    if (!this.reasoningStarted) {
+      this.reasoningStarted = true;
+      this.pushChunk({
+        type: "block-start",
+        index: 0,
+        blockType: "reasoning",
+      });
     }
-    this.currentBlock = "reasoning";
-    this.pushChunk({
-      type: "block-start",
-      index: 0,
-      blockType: "reasoning",
-    });
   }
 
   writeThinking(text: string): void {
     if (!text || this.hasEnded) return;
+
+    // If text output has already started, index 0 reasoning block is already sealed.
+    // Divert any trailing tool/plan feedback directly into the active text block
+    // to strictly preserve DSH block lifecycle and prevent block index collisions.
+    if (this.textStarted && !this.textClosed) {
+      this.writeText(text);
+      return;
+    }
+
     this.ensureReasoningOpen();
     this.reasoningBuffer += text;
     this.pushChunk({
@@ -166,7 +177,8 @@ export class DshStreamWriter {
   }
 
   closeReasoningBlock(): void {
-    if (this.currentBlock === "reasoning") {
+    if (this.reasoningStarted && !this.reasoningClosed) {
+      this.reasoningClosed = true;
       this.pushChunk({
         type: "block-end",
         index: 0,
@@ -175,59 +187,22 @@ export class DshStreamWriter {
           text: this.reasoningBuffer,
         },
       });
-      this.currentBlock = "none";
     }
-  }
-
-  writeToolCallStart(id: string, name: string, args: string = "{}"): void {
-    if (this.hasEnded) return;
-    const index = ++this.blockIndex;
-    this.activeToolCalls.set(id, { index, name });
-
-    this.pushChunk({
-      type: "block-start",
-      index,
-      blockType: "tool-call",
-    });
-
-    this.pushChunk({
-      type: "tool-call-delta",
-      index,
-      id,
-      name,
-      argumentsDelta: args || "{}",
-    });
-  }
-
-  writeToolCallEnd(id: string, name: string, args: string = "{}"): void {
-    if (this.hasEnded) return;
-    const entry = this.activeToolCalls.get(id);
-    const index = entry ? entry.index : ++this.blockIndex;
-    this.activeToolCalls.delete(id);
-
-    this.pushChunk({
-      type: "block-end",
-      index,
-      block: {
-        type: "tool-call",
-        id,
-        name: name || entry?.name || "antigravity-tool",
-        arguments: args || "{}",
-      },
-    });
   }
 
   ensureTextOpen(): void {
-    if (this.currentBlock === "text") return;
-    if (this.currentBlock === "reasoning") {
+    if (this.hasEnded || this.textClosed) return;
+    if (this.reasoningStarted && !this.reasoningClosed) {
       this.closeReasoningBlock();
     }
-    this.currentBlock = "text";
-    this.pushChunk({
-      type: "block-start",
-      index: 1,
-      blockType: "text",
-    });
+    if (!this.textStarted) {
+      this.textStarted = true;
+      this.pushChunk({
+        type: "block-start",
+        index: 1,
+        blockType: "text",
+      });
+    }
   }
 
   writeText(text: string): void {
@@ -242,7 +217,8 @@ export class DshStreamWriter {
   }
 
   closeTextBlock(): void {
-    if (this.currentBlock === "text") {
+    if (this.textStarted && !this.textClosed) {
+      this.textClosed = true;
       this.pushChunk({
         type: "block-end",
         index: 1,
@@ -251,11 +227,11 @@ export class DshStreamWriter {
           text: this.textBuffer,
         },
       });
-      this.currentBlock = "none";
     }
   }
 
   writeUsage(usage: TokenAccounting): void {
+    if (this.hasEnded) return;
     this.pushChunk({
       type: "usage",
       usage: {
@@ -272,22 +248,6 @@ export class DshStreamWriter {
     if (this.hasEnded) return;
     this.closeReasoningBlock();
     this.closeTextBlock();
-
-    // Close any lingering active tool calls
-    for (const [id, entry] of this.activeToolCalls.entries()) {
-      this.pushChunk({
-        type: "block-end",
-        index: entry.index,
-        block: {
-          type: "tool-call",
-          id,
-          name: entry.name,
-          arguments: "{}",
-        },
-      });
-    }
-    this.activeToolCalls.clear();
-
     this.hasEnded = true;
     this.pushChunk({
       type: "finish",

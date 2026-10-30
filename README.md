@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.8-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.9-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,12 @@
 ---
 
 ## 版本更新日志 (Changelog)
+
+### v1.0.9 (2026-10-30)
+- **修复工具调用导致的 `unknown tool` 异常与报告消失**：
+  - 彻底阻断对外层 DSH 调度器发射未注册工具块（`blockType: 'tool-call'`），将 ACP 内部工具执行完整收拢流入思维链轨迹；
+  - 彻底修复 `DshStreamWriter` 状态机 Block Index 冲突，防止 index: 1 文本槽位被冲刷覆盖；
+  - 解决 PTC 模式下因宿主调度失败导致的多轮空转死循环与 5M+ Token 异常消耗。
 
 ### v1.0.8 (2026-10-30)
 - **工具调用原生轨迹发射**：重构 `DshStreamWriter`，实现官方 `blockType: 'tool-call'` 结构化流式发射，修复 DSH 轨迹看板中工具调用显示为 0、无详细工具名和参数的问题。

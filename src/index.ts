@@ -323,18 +323,10 @@ export class DshAntigravityService {
       for (const activity of activities) {
         if (activity.type === "thought") {
           writer.writeThinking(activity.delta);
-        } else if (activity.type === "plan") {
+        } else if (activity.type === "plan" || activity.type === "tool") {
+          // Tool calls and plans in ACP are executed internally by Antigravity agent.
+          // Stream them into reasoning/trace so they render richly without triggering DSH host-side tool dispatch.
           writer.writeThinking(activity.text);
-        } else if (activity.type === "tool") {
-          // 1. Write formatted visual text into thinking stream for rich UI display
-          writer.writeThinking(activity.text);
-
-          // 2. Emit native DSH tool-call blocks so DSH track counters record real tool counts
-          if (activity.isStart && activity.toolCallId) {
-            writer.writeToolCallStart(activity.toolCallId, activity.name || "antigravity-tool", activity.args || "{}");
-          } else if (activity.toolCallId) {
-            writer.writeToolCallEnd(activity.toolCallId, activity.name || "antigravity-tool", activity.args || "{}");
-          }
         } else if (activity.type === "text") {
           writer.writeText(activity.delta);
         } else if (activity.type === "usage") {

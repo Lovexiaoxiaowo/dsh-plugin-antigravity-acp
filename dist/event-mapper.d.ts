@@ -10,18 +10,17 @@ export declare function mapSessionUpdate(notification: SessionNotification): Acp
  */
 export declare class DshStreamWriter {
     private readonly pushChunk;
-    private currentBlock;
+    private reasoningStarted;
+    private reasoningClosed;
     private reasoningBuffer;
+    private textStarted;
+    private textClosed;
     private textBuffer;
     private hasEnded;
-    private blockIndex;
-    private activeToolCalls;
     constructor(pushChunk: (chunk: any) => void);
     ensureReasoningOpen(): void;
     writeThinking(text: string): void;
     closeReasoningBlock(): void;
-    writeToolCallStart(id: string, name: string, args?: string): void;
-    writeToolCallEnd(id: string, name: string, args?: string): void;
     ensureTextOpen(): void;
     writeText(text: string): void;
     closeTextBlock(): void;

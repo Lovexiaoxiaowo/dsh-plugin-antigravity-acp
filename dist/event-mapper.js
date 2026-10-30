@@ -123,31 +123,38 @@ export function mapSessionUpdate(notification) {
  */
 export class DshStreamWriter {
     pushChunk;
-    currentBlock = "none";
+    reasoningStarted = false;
+    reasoningClosed = false;
     reasoningBuffer = "";
+    textStarted = false;
+    textClosed = false;
     textBuffer = "";
     hasEnded = false;
-    blockIndex = 0;
-    activeToolCalls = new Map();
     constructor(pushChunk) {
         this.pushChunk = pushChunk;
     }
     ensureReasoningOpen() {
-        if (this.currentBlock === "reasoning")
+        if (this.hasEnded || this.reasoningClosed)
             return;
-        if (this.currentBlock === "text") {
-            this.closeTextBlock();
+        if (!this.reasoningStarted) {
+            this.reasoningStarted = true;
+            this.pushChunk({
+                type: "block-start",
+                index: 0,
+                blockType: "reasoning",
+            });
         }
-        this.currentBlock = "reasoning";
-        this.pushChunk({
-            type: "block-start",
-            index: 0,
-            blockType: "reasoning",
-        });
     }
     writeThinking(text) {
         if (!text || this.hasEnded)
             return;
+        // If text output has already started, index 0 reasoning block is already sealed.
+        // Divert any trailing tool/plan feedback directly into the active text block
+        // to strictly preserve DSH block lifecycle and prevent block index collisions.
+        if (this.textStarted && !this.textClosed) {
+            this.writeText(text);
+            return;
+        }
         this.ensureReasoningOpen();
         this.reasoningBuffer += text;
         this.pushChunk({
@@ -157,7 +164,8 @@ export class DshStreamWriter {
         });
     }
     closeReasoningBlock() {
-        if (this.currentBlock === "reasoning") {
+        if (this.reasoningStarted && !this.reasoningClosed) {
+            this.reasoningClosed = true;
             this.pushChunk({
                 type: "block-end",
                 index: 0,
@@ -166,56 +174,22 @@ export class DshStreamWriter {
                     text: this.reasoningBuffer,
                 },
             });
-            this.currentBlock = "none";
         }
-    }
-    writeToolCallStart(id, name, args = "{}") {
-        if (this.hasEnded)
-            return;
-        const index = ++this.blockIndex;
-        this.activeToolCalls.set(id, { index, name });
-        this.pushChunk({
-            type: "block-start",
-            index,
-            blockType: "tool-call",
-        });
-        this.pushChunk({
-            type: "tool-call-delta",
-            index,
-            id,
-            name,
-            argumentsDelta: args || "{}",
-        });
-    }
-    writeToolCallEnd(id, name, args = "{}") {
-        if (this.hasEnded)
-            return;
-        const entry = this.activeToolCalls.get(id);
-        const index = entry ? entry.index : ++this.blockIndex;
-        this.activeToolCalls.delete(id);
-        this.pushChunk({
-            type: "block-end",
-            index,
-            block: {
-                type: "tool-call",
-                id,
-                name: name || entry?.name || "antigravity-tool",
-                arguments: args || "{}",
-            },
-        });
     }
     ensureTextOpen() {
-        if (this.currentBlock === "text")
+        if (this.hasEnded || this.textClosed)
             return;
-        if (this.currentBlock === "reasoning") {
+        if (this.reasoningStarted && !this.reasoningClosed) {
             this.closeReasoningBlock();
         }
-        this.currentBlock = "text";
-        this.pushChunk({
-            type: "block-start",
-            index: 1,
-            blockType: "text",
-        });
+        if (!this.textStarted) {
+            this.textStarted = true;
+            this.pushChunk({
+                type: "block-start",
+                index: 1,
+                blockType: "text",
+            });
+        }
     }
     writeText(text) {
         if (!text || this.hasEnded)
@@ -229,7 +203,8 @@ export class DshStreamWriter {
         });
     }
     closeTextBlock() {
-        if (this.currentBlock === "text") {
+        if (this.textStarted && !this.textClosed) {
+            this.textClosed = true;
             this.pushChunk({
                 type: "block-end",
                 index: 1,
@@ -238,10 +213,11 @@ export class DshStreamWriter {
                     text: this.textBuffer,
                 },
             });
-            this.currentBlock = "none";
         }
     }
     writeUsage(usage) {
+        if (this.hasEnded)
+            return;
         this.pushChunk({
             type: "usage",
             usage: {
@@ -258,20 +234,6 @@ export class DshStreamWriter {
             return;
         this.closeReasoningBlock();
         this.closeTextBlock();
-        // Close any lingering active tool calls
-        for (const [id, entry] of this.activeToolCalls.entries()) {
-            this.pushChunk({
-                type: "block-end",
-                index: entry.index,
-                block: {
-                    type: "tool-call",
-                    id,
-                    name: entry.name,
-                    arguments: "{}",
-                },
-            });
-        }
-        this.activeToolCalls.clear();
         this.hasEnded = true;
         this.pushChunk({
             type: "finish",
