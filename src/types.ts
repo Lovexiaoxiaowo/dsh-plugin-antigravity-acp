@@ -103,6 +103,7 @@ export interface QuotaGroupSummary {
 }
 
 export interface QuotaSummary {
+  isStale?: boolean;
   model: string;
   displayName: string;
   remainingFraction: number;
@@ -126,6 +127,7 @@ export interface QuotaSummary {
 }
 
 export interface SessionQuotaSnapshot {
+  isStale?: boolean;
   quota?: QuotaSummary;
   sessionTokens: TokenAccounting;
   contextUsage: {

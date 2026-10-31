@@ -28,6 +28,9 @@ export class AntigravityQuotaService {
   private cachedTierData: any = null;
   private cachedSummaryData: any = null;
   private lastFetchTime = 0;
+  private consecutiveFailures = 0;
+  private circuitOpenUntil = 0;
+  private isCircuitOpen = false;
   private readonly CACHE_TTL_MS = 15_000; // 15s cache
 
   constructor(private readonly sessionManager: DshSessionManager) {}
@@ -43,6 +46,7 @@ export class AntigravityQuotaService {
             "user-agent": "antigravity",
           },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(5000),
         });
         if (res.ok) {
           return await res.json();
@@ -57,6 +61,11 @@ export class AntigravityQuotaService {
   private async fetchUpstreamData(): Promise<void> {
     const now = Date.now();
     if (this.cachedModelsData && now - this.lastFetchTime < this.CACHE_TTL_MS) {
+      return;
+    }
+
+    if (now < this.circuitOpenUntil) {
+      this.isCircuitOpen = true;
       return;
     }
 
@@ -75,17 +84,36 @@ export class AntigravityQuotaService {
         this.postWithFallback(QUOTA_SUMMARY_ENDPOINTS, token, {}),
       ]);
 
-      if (modelsData?.models) {
-        this.cachedModelsData = modelsData.models;
-        this.lastFetchTime = now;
-      }
-      if (tierData) {
-        this.cachedTierData = tierData;
-      }
-      if (summaryData) {
-        this.cachedSummaryData = summaryData;
+      const anySuccess = Boolean(modelsData || tierData || summaryData);
+      if (anySuccess) {
+        this.consecutiveFailures = 0;
+        this.circuitOpenUntil = 0;
+        this.isCircuitOpen = false;
+
+        if (modelsData?.models) {
+          this.cachedModelsData = modelsData.models;
+          this.lastFetchTime = now;
+        }
+        if (tierData) {
+          this.cachedTierData = tierData;
+        }
+        if (summaryData) {
+          this.cachedSummaryData = summaryData;
+        }
+      } else {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= 3) {
+          this.circuitOpenUntil = now + 30_000;
+          this.isCircuitOpen = true;
+          console.warn("[antigravity-acp] quota endpoint circuit breaker open for 30s");
+        }
       }
     } catch (err) {
+      this.consecutiveFailures++;
+      if (this.consecutiveFailures >= 3) {
+        this.circuitOpenUntil = now + 30_000;
+        this.isCircuitOpen = true;
+      }
       console.warn("[antigravity-acp] quota fetch error:", err);
     }
   }
@@ -331,6 +359,7 @@ export class AntigravityQuotaService {
       tier: tierName,
       maxTokens: maxContextTokens,
       groups,
+      isStale: this.isCircuitOpen || (Date.now() - this.lastFetchTime > 60_000),
     };
 
     // Session token accounting and context calculation
@@ -354,6 +383,7 @@ export class AntigravityQuotaService {
 
     return {
       quota: quotaSummary,
+      isStale: this.isCircuitOpen || (Date.now() - this.lastFetchTime > 60_000),
       sessionTokens,
       contextUsage: {
         usedTokens,
