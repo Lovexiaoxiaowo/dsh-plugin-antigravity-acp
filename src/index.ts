@@ -261,6 +261,10 @@ export class DshAntigravityService {
       tools?: any[];
     }
   ): AsyncIterable<any> {
+    if (options?.signal?.aborted) {
+      return;
+    }
+
     if (!this.isLoggedIn()) {
       throw new Error("请先在「设置 -> 插件 -> Google Antigravity」完成 Google 账号登录授权。");
     }
@@ -318,32 +322,26 @@ export class DshAntigravityService {
     type QueueItem = { chunk?: any; error?: any; done?: boolean };
     const queue: QueueItem[] = [];
     let resolver: ((item: QueueItem) => void) | null = null;
-    const HIGH_WATERMARK = 500;
-    const LOW_WATERMARK = 200;
-    let isPaused = false;
+    let isFinished = false;
 
     const pushItem = (item: QueueItem) => {
+      if (isFinished && !item.done) return;
       if (resolver) {
         const r = resolver;
         resolver = null;
         r(item);
       } else {
-        queue.push(item);
-        if (!isPaused && queue.length >= HIGH_WATERMARK) {
-          isPaused = true;
-          this.client?.pauseStdout();
+        // Application buffer protection: drop redundant intermediate thinking tokens if severely lagged (>1000 items)
+        if (queue.length > 1000 && item.chunk?.type === "reasoning-delta") {
+          return;
         }
+        queue.push(item);
       }
     };
 
     const nextItem = (): Promise<QueueItem> => {
       if (queue.length > 0) {
-        const item = queue.shift()!;
-        if (isPaused && queue.length <= LOW_WATERMARK) {
-          isPaused = false;
-          this.client?.resumeStdout();
-        }
-        return Promise.resolve(item);
+        return Promise.resolve(queue.shift()!);
       }
       return new Promise((resolve) => {
         resolver = resolve;
@@ -373,8 +371,15 @@ export class DshAntigravityService {
           // bridge it directly to DSH native subagent engine!
           if ((activity as any).isSubagent && (activity as any).isStart && hasSubagentTool) {
             const raw = (activity as any).rawArgs || {};
-            const description = raw.Role || raw.description || "Subagent Delegation";
-            const prompt = raw.Prompt || raw.prompt || (activity as any).args || "Subagent task";
+            let subagentList: any[] = [];
+            if (Array.isArray(raw.Subagents)) {
+              subagentList = raw.Subagents;
+            } else if (raw.Role || raw.description || raw.Prompt || raw.prompt) {
+              subagentList = [raw];
+            }
+            const primary = subagentList[0] || {};
+            const description = primary.Role || primary.description || "Subagent Delegation";
+            const prompt = primary.Prompt || primary.prompt || (activity as any).args || "Subagent task";
             writer.writeToolCall(activity.toolCallId || `sub-${Date.now()}`, "subagent", {
               description,
               prompt,
@@ -395,11 +400,20 @@ export class DshAntigravityService {
     });
 
     const abortHandler = () => {
+      if (isFinished) return;
+      isFinished = true;
       if (acpSessionId) {
         this.cancel(acpSessionId).catch(() => {});
       }
+      queue.length = 0; // Immediately dump stale buffered items
       writer.finish("stop");
-      pushItem({ done: true });
+      if (resolver) {
+        const r = resolver;
+        resolver = null;
+        r({ done: true });
+      } else {
+        queue.push({ done: true });
+      }
     };
 
     options?.signal?.addEventListener("abort", abortHandler, { once: true });
@@ -524,13 +538,12 @@ export class DshAntigravityService {
         }
       }
     } finally {
-      if (isPaused) {
-        isPaused = false;
-        this.client?.resumeStdout();
-      }
       this.notificationListeners.delete(listenerKey);
       options?.signal?.removeEventListener("abort", abortHandler);
       queue.length = 0;
+      if (!isFinished && acpSessionId) {
+        this.cancel(acpSessionId).catch(() => {});
+      }
     }
   }
 

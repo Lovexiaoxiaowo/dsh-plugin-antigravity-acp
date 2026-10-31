@@ -9,10 +9,12 @@ export declare class AntigravityQuotaService {
     private consecutiveFailures;
     private circuitOpenUntil;
     private isCircuitOpen;
+    private pendingFetchPromise;
     private readonly CACHE_TTL_MS;
     constructor(sessionManager: DshSessionManager);
     private postWithFallback;
     private fetchUpstreamData;
+    private doFetchUpstreamData;
     private formatCountdown;
     private formatWeeklyCountdown;
     private formatResetDate;

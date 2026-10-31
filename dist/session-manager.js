@@ -1,10 +1,33 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 const DEFAULT_SESSIONS_DIR = path.join(os.homedir(), ".gemini", "antigravity-acp");
-const SESSIONS_FILE = path.join(DEFAULT_SESSIONS_DIR, "sessions.json");
-const TOKEN_STATS_FILE = path.join(DEFAULT_SESSIONS_DIR, "token_stats.json");
+async function atomicWriteFileWithRetry(targetFile, content, dir) {
+    const tmpFile = path.join(dir, `${path.basename(targetFile)}.${crypto.randomUUID()}.tmp`);
+    try {
+        await fs.promises.writeFile(tmpFile, content, { encoding: "utf-8", flag: "w" });
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                await fs.promises.rename(tmpFile, targetFile);
+                return;
+            }
+            catch (err) {
+                if (attempt < 4 && (err.code === "EPERM" || err.code === "EBUSY" || err.code === "EACCES")) {
+                    await new Promise((r) => setTimeout(r, 25 * (attempt + 1)));
+                }
+                else {
+                    throw err;
+                }
+            }
+        }
+    }
+    finally {
+        await fs.promises.unlink(tmpFile).catch(() => { });
+    }
+}
 export class DshSessionManager {
+    sessionsDir;
     bindings = new Map();
     tokenStats = new Map();
     saveTimeout = null;
@@ -12,9 +35,21 @@ export class DshSessionManager {
     pendingWrite = false;
     static exitHooksRegistered = false;
     static activeInstances = new Set();
-    constructor() {
+    sessionsFile;
+    tokenStatsFile;
+    constructor(sessionsDir = DEFAULT_SESSIONS_DIR) {
+        this.sessionsDir = sessionsDir;
+        this.sessionsFile = path.join(this.sessionsDir, "sessions.json");
+        this.tokenStatsFile = path.join(this.sessionsDir, "token_stats.json");
         this.loadFromDisk();
         this.registerExitHooks();
+    }
+    dispose() {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+        DshSessionManager.activeInstances.delete(this);
     }
     registerExitHooks() {
         DshSessionManager.activeInstances.add(this);
@@ -26,14 +61,20 @@ export class DshSessionManager {
                 }
             };
             process.once("exit", flushAll);
-            process.once("SIGINT", flushAll);
-            process.once("SIGTERM", flushAll);
+            process.once("SIGINT", () => {
+                flushAll();
+                process.exit(130);
+            });
+            process.once("SIGTERM", () => {
+                flushAll();
+                process.exit(143);
+            });
         }
     }
     loadFromDisk() {
         try {
-            if (fs.existsSync(SESSIONS_FILE)) {
-                const raw = fs.readFileSync(SESSIONS_FILE, "utf-8");
+            if (fs.existsSync(this.sessionsFile)) {
+                const raw = fs.readFileSync(this.sessionsFile, "utf-8");
                 const list = JSON.parse(raw);
                 if (Array.isArray(list)) {
                     for (const item of list) {
@@ -48,8 +89,8 @@ export class DshSessionManager {
             console.warn("[antigravity-acp] failed to load sessions from disk:", err);
         }
         try {
-            if (fs.existsSync(TOKEN_STATS_FILE)) {
-                const raw = fs.readFileSync(TOKEN_STATS_FILE, "utf-8");
+            if (fs.existsSync(this.tokenStatsFile)) {
+                const raw = fs.readFileSync(this.tokenStatsFile, "utf-8");
                 const stats = JSON.parse(raw);
                 for (const [key, val] of Object.entries(stats)) {
                     this.tokenStats.set(key, val);
@@ -76,34 +117,18 @@ export class DshSessionManager {
         }
         this.isWriting = true;
         try {
-            if (!fs.existsSync(DEFAULT_SESSIONS_DIR)) {
-                await fs.promises.mkdir(DEFAULT_SESSIONS_DIR, { recursive: true });
+            if (!fs.existsSync(this.sessionsDir)) {
+                await fs.promises.mkdir(this.sessionsDir, { recursive: true });
             }
             const list = Array.from(this.bindings.values());
             const sessionsJson = JSON.stringify(list, null, 2);
-            const tmpSessions = `${SESSIONS_FILE}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-            await fs.promises.writeFile(tmpSessions, sessionsJson, "utf-8");
-            try {
-                await fs.promises.rename(tmpSessions, SESSIONS_FILE);
-            }
-            catch {
-                await fs.promises.copyFile(tmpSessions, SESSIONS_FILE);
-                await fs.promises.unlink(tmpSessions).catch(() => { });
-            }
+            await atomicWriteFileWithRetry(this.sessionsFile, sessionsJson, this.sessionsDir);
             const statsObj = {};
             for (const [key, val] of this.tokenStats.entries()) {
                 statsObj[key] = val;
             }
             const tokenStatsJson = JSON.stringify(statsObj, null, 2);
-            const tmpTokens = `${TOKEN_STATS_FILE}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-            await fs.promises.writeFile(tmpTokens, tokenStatsJson, "utf-8");
-            try {
-                await fs.promises.rename(tmpTokens, TOKEN_STATS_FILE);
-            }
-            catch {
-                await fs.promises.copyFile(tmpTokens, TOKEN_STATS_FILE);
-                await fs.promises.unlink(tmpTokens).catch(() => { });
-            }
+            await atomicWriteFileWithRetry(this.tokenStatsFile, tokenStatsJson, this.sessionsDir);
         }
         catch (err) {
             console.warn("[antigravity-acp] failed to persist sessions/tokens to disk:", err);
@@ -122,16 +147,48 @@ export class DshSessionManager {
             this.saveTimeout = null;
         }
         try {
-            if (!fs.existsSync(DEFAULT_SESSIONS_DIR)) {
-                fs.mkdirSync(DEFAULT_SESSIONS_DIR, { recursive: true });
+            if (!fs.existsSync(this.sessionsDir)) {
+                fs.mkdirSync(this.sessionsDir, { recursive: true });
             }
             const list = Array.from(this.bindings.values());
-            fs.writeFileSync(SESSIONS_FILE, JSON.stringify(list, null, 2), "utf-8");
+            const tmpSessions = path.join(this.sessionsDir, `sessions.${crypto.randomUUID()}.tmp`);
+            try {
+                fs.writeFileSync(tmpSessions, JSON.stringify(list, null, 2), "utf-8");
+                try {
+                    fs.renameSync(tmpSessions, this.sessionsFile);
+                }
+                catch {
+                    fs.writeFileSync(this.sessionsFile, JSON.stringify(list, null, 2), "utf-8");
+                }
+            }
+            finally {
+                try {
+                    if (fs.existsSync(tmpSessions))
+                        fs.unlinkSync(tmpSessions);
+                }
+                catch { }
+            }
             const statsObj = {};
             for (const [key, val] of this.tokenStats.entries()) {
                 statsObj[key] = val;
             }
-            fs.writeFileSync(TOKEN_STATS_FILE, JSON.stringify(statsObj, null, 2), "utf-8");
+            const tmpTokens = path.join(this.sessionsDir, `token_stats.${crypto.randomUUID()}.tmp`);
+            try {
+                fs.writeFileSync(tmpTokens, JSON.stringify(statsObj, null, 2), "utf-8");
+                try {
+                    fs.renameSync(tmpTokens, this.tokenStatsFile);
+                }
+                catch {
+                    fs.writeFileSync(this.tokenStatsFile, JSON.stringify(statsObj, null, 2), "utf-8");
+                }
+            }
+            finally {
+                try {
+                    if (fs.existsSync(tmpTokens))
+                        fs.unlinkSync(tmpTokens);
+                }
+                catch { }
+            }
         }
         catch (err) {
             console.warn("[antigravity-acp] failed to persist sessions/tokens synchronously:", err);

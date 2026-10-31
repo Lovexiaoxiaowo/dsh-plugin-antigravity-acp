@@ -57,26 +57,38 @@ describe("event-mapper protocol suite", () => {
     expect((activities[0] as any).isStart).toBe(true);
   });
 
-  it("Lane 6: mapSessionUpdate maps completed tool call status in trace", () => {
+  it("Lane 6: mapSessionUpdate handles tool_call_update completed and failed states", () => {
     const tracker = new AcpStepTracker();
     tracker.getStepNumber("call-xyz"); // step 1
-    const notification: any = {
+    // Completed state
+    const completedNotice: any = {
       sessionId: "sess-1",
       update: {
-        sessionUpdate: "tool_call",
+        sessionUpdate: "tool_call_update",
         toolCallId: "call-xyz",
         title: "view_file",
         status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "file contents read" } }],
       },
     };
-    const activities = mapSessionUpdate(notification, tracker);
-    expect(activities.length).toBe(1);
-    expect(activities[0].type).toBe("tool");
-    expect((activities[0] as any).text).toContain("[步骤 #1]");
-    expect((activities[0] as any).text).toContain("completed");
+    const completedActivities = mapSessionUpdate(completedNotice, tracker);
+    expect(completedActivities[0].text).toContain("✅ **[步骤 #1 完成]**");
+
+    // Failed state
+    const failedNotice: any = {
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-xyz",
+        title: "view_file",
+        status: "failed",
+      },
+    };
+    const failedActivities = mapSessionUpdate(failedNotice, tracker);
+    expect(failedActivities[0].text).toContain("❌ **[步骤 #1 失败]**");
   });
 
-  it("Lane 7: mapSessionUpdate identifies subagent delegation tool call", () => {
+  it("Lane 7: mapSessionUpdate handles subagent delegation with Subagents array", () => {
     const tracker = new AcpStepTracker();
     const notification: any = {
       sessionId: "sess-1",
@@ -93,6 +105,7 @@ describe("event-mapper protocol suite", () => {
     const activities = mapSessionUpdate(notification, tracker);
     expect(activities.length).toBe(1);
     expect((activities[0] as any).isSubagent).toBe(true);
+    expect((activities[0] as any).rawArgs.Subagents[0].Role).toBe("Code Reviewer");
   });
 
   it("Lane 8: mapSessionUpdate extracts message text deltas", () => {

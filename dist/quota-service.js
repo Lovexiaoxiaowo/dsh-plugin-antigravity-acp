@@ -25,34 +25,55 @@ export class AntigravityQuotaService {
     consecutiveFailures = 0;
     circuitOpenUntil = 0;
     isCircuitOpen = false;
+    pendingFetchPromise = null;
     CACHE_TTL_MS = 15_000; // 15s cache
     constructor(sessionManager) {
         this.sessionManager = sessionManager;
     }
     async postWithFallback(endpoints, token, body) {
-        for (const ep of endpoints) {
-            try {
-                const res = await fetch(ep, {
-                    method: "POST",
-                    headers: {
-                        authorization: `Bearer ${token}`,
-                        "content-type": "application/json",
-                        "user-agent": "antigravity",
-                    },
-                    body: JSON.stringify(body),
-                    signal: AbortSignal.timeout(5000),
-                });
-                if (res.ok) {
-                    return await res.json();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        try {
+            for (const ep of endpoints) {
+                if (controller.signal.aborted)
+                    break;
+                try {
+                    const res = await fetch(ep, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${token}`,
+                            "content-type": "application/json",
+                            "user-agent": "antigravity",
+                        },
+                        body: JSON.stringify(body),
+                        signal: controller.signal,
+                    });
+                    if (res.ok) {
+                        return await res.json();
+                    }
+                    await res.body?.cancel().catch(() => { });
+                }
+                catch (err) {
+                    if (controller.signal.aborted)
+                        break;
                 }
             }
-            catch (err) {
-                // Try next fallback endpoint
-            }
+        }
+        finally {
+            clearTimeout(timer);
         }
         return null;
     }
-    async fetchUpstreamData() {
+    fetchUpstreamData() {
+        if (this.pendingFetchPromise) {
+            return this.pendingFetchPromise;
+        }
+        this.pendingFetchPromise = this.doFetchUpstreamData().finally(() => {
+            this.pendingFetchPromise = null;
+        });
+        return this.pendingFetchPromise;
+    }
+    async doFetchUpstreamData() {
         const now = Date.now();
         if (this.cachedModelsData && now - this.lastFetchTime < this.CACHE_TTL_MS) {
             return;

@@ -31,34 +31,53 @@ export class AntigravityQuotaService {
   private consecutiveFailures = 0;
   private circuitOpenUntil = 0;
   private isCircuitOpen = false;
+  private pendingFetchPromise: Promise<void> | null = null;
   private readonly CACHE_TTL_MS = 15_000; // 15s cache
 
   constructor(private readonly sessionManager: DshSessionManager) {}
 
   private async postWithFallback(endpoints: string[], token: string, body: any): Promise<any | null> {
-    for (const ep of endpoints) {
-      try {
-        const res = await fetch(ep, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-            "user-agent": "antigravity",
-          },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          return await res.json();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      for (const ep of endpoints) {
+        if (controller.signal.aborted) break;
+        try {
+          const res = await fetch(ep, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${token}`,
+              "content-type": "application/json",
+              "user-agent": "antigravity",
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+          if (res.ok) {
+            return await res.json();
+          }
+          await res.body?.cancel().catch(() => {});
+        } catch (err: any) {
+          if (controller.signal.aborted) break;
         }
-      } catch (err) {
-        // Try next fallback endpoint
       }
+    } finally {
+      clearTimeout(timer);
     }
     return null;
   }
 
-  private async fetchUpstreamData(): Promise<void> {
+  private fetchUpstreamData(): Promise<void> {
+    if (this.pendingFetchPromise) {
+      return this.pendingFetchPromise;
+    }
+    this.pendingFetchPromise = this.doFetchUpstreamData().finally(() => {
+      this.pendingFetchPromise = null;
+    });
+    return this.pendingFetchPromise;
+  }
+
+  private async doFetchUpstreamData(): Promise<void> {
     const now = Date.now();
     if (this.cachedModelsData && now - this.lastFetchTime < this.CACHE_TTL_MS) {
       return;

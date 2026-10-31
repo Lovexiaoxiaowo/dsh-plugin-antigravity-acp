@@ -1,9 +1,26 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { DshSessionManager } from "../src/session-manager.js";
 
-describe("session-manager lifecycle and token suite", () => {
+describe("session-manager lifecycle and token suite (Sandboxed)", () => {
+  let sandboxDir: string;
+  let mgr: DshSessionManager;
+
+  beforeEach(() => {
+    sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-test-sessions-"));
+    mgr = new DshSessionManager(sandboxDir);
+  });
+
+  afterEach(() => {
+    mgr.dispose();
+    try {
+      fs.rmSync(sandboxDir, { recursive: true, force: true });
+    } catch {}
+  });
+
   it("Lane 13: saves and retrieves session binding correctly", () => {
-    const mgr = new DshSessionManager();
     mgr.saveBinding({
       dshSessionId: "dsh-test-1",
       acpSessionId: "acp-test-1",
@@ -17,7 +34,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 14: increments message count accurately", () => {
-    const mgr = new DshSessionManager();
     mgr.saveBinding({
       dshSessionId: "dsh-test-2",
       acpSessionId: "acp-test-2",
@@ -29,7 +45,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 15: removes binding cleanly", () => {
-    const mgr = new DshSessionManager();
     mgr.saveBinding({
       dshSessionId: "dsh-test-3",
       acpSessionId: "acp-test-3",
@@ -40,7 +55,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 16: calculates genuine turn tokens when input is under 1M threshold", () => {
-    const mgr = new DshSessionManager();
     const usage = mgr.recordUsage("sess-token-1", { inputTokens: 450, outputTokens: 120 }, 0, 0);
     expect(usage.inputTokens).toBe(450);
     expect(usage.outputTokens).toBe(120);
@@ -48,28 +62,24 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 17: discards cumulative account meter (>1M) and falls back to char estimation", () => {
-    const mgr = new DshSessionManager();
     const usage = mgr.recordUsage("sess-token-2", { inputTokens: 1_500_000, outputTokens: 80 }, 700, 280);
     expect(usage.inputTokens).toBe(200);
     expect(usage.outputTokens).toBe(80);
   });
 
   it("Lane 18: provides safe fallback token counts when no metadata exists", () => {
-    const mgr = new DshSessionManager();
     const usage = mgr.recordUsage("sess-token-3", {}, 0, 0);
     expect(usage.inputTokens).toBe(50);
     expect(usage.outputTokens).toBe(20);
   });
 
   it("Lane 19: strips <USER_REQUEST> tags and extracts clean user prompt", () => {
-    const mgr = new DshSessionManager();
     const raw = "<USER_REQUEST>\nFix bug in parser\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime=now\n</ADDITIONAL_METADATA>";
     const cleaned = mgr.cleanUserQuery(raw);
     expect(cleaned).toBe("Fix bug in parser");
   });
 
   it("Lane 20: identifies system injection messages correctly", () => {
-    const mgr = new DshSessionManager();
     expect(mgr.isSystemInjection({ role: "system", content: "You are an agent." })).toBe(true);
     expect(mgr.isSystemInjection({ role: "developer", content: "System rule." })).toBe(true);
     expect(mgr.isSystemInjection({ role: "user", content: "Time sampled while preparing turn 1, step 1: 2026-10-31" })).toBe(true);
@@ -78,7 +88,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 21: prunes internal step traces from assistant history", () => {
-    const mgr = new DshSessionManager();
     const rawHistory = "I will check the files.\n> 🛠️ [步骤 #1] view_file\n> ✅ [步骤 #1 完成]\nHere is the answer.";
     const pruned = mgr.pruneAssistantHistory(rawHistory);
     expect(pruned).not.toContain("🛠️ [步骤 #1]");
@@ -86,7 +95,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 22: formats prompt for warm session returning authentic query only", () => {
-    const mgr = new DshSessionManager();
     const messages = [
       { role: "user", content: "first question" },
       { role: "assistant", content: "first answer" },
@@ -97,7 +105,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 23: reconstructs structured context preamble for new session with history", () => {
-    const mgr = new DshSessionManager();
     const messages = [
       { role: "user", content: "first question" },
       { role: "assistant", content: "first answer" },
@@ -112,7 +119,6 @@ describe("session-manager lifecycle and token suite", () => {
   });
 
   it("Lane 24: extracts multimodal content blocks (text and image)", async () => {
-    const mgr = new DshSessionManager();
     const msg = {
       role: "user",
       content: [
@@ -128,15 +134,26 @@ describe("session-manager lifecycle and token suite", () => {
     expect((blocks[1] as any).data).toBe("iVBORw0KGgoAAAANSUhEUg==");
   });
 
-  it("Lane 25: flushes pending writes cleanly asynchronously and synchronously", async () => {
-    const mgr = new DshSessionManager();
+  it("Lane 25: flushes pending writes cleanly asynchronously and writes real disk files", async () => {
     mgr.saveBinding({
-      dshSessionId: "flush-test",
-      acpSessionId: "acp-flush",
-      lastActive: Date.now(),
+      dshSessionId: "flush-disk-test",
+      acpSessionId: "acp-disk-1",
+      lastActive: 123456789,
+      messageCount: 3,
     });
+    // Async flush
     await mgr.flush();
-    mgr.flushSync();
-    expect(mgr.getBinding("flush-test")?.acpSessionId).toBe("acp-flush");
+
+    // Verify physical file was genuinely created on disk and parseable!
+    const sessionsFile = path.join(sandboxDir, "sessions.json");
+    expect(fs.existsSync(sessionsFile)).toBe(true);
+    const content = JSON.parse(fs.readFileSync(sessionsFile, "utf-8"));
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.some((b: any) => b.dshSessionId === "flush-disk-test" && b.acpSessionId === "acp-disk-1")).toBe(true);
+
+    // Verify reload from a fresh manager instance reads the persisted data from disk
+    const freshMgr = new DshSessionManager(sandboxDir);
+    expect(freshMgr.getBinding("flush-disk-test")?.acpSessionId).toBe("acp-disk-1");
+    freshMgr.dispose();
   });
 });

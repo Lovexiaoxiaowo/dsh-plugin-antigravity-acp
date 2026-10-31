@@ -1,5 +1,6 @@
 import type { AcpSessionBinding, TokenAccounting } from "./types.js";
 export declare class DshSessionManager {
+    private readonly sessionsDir;
     private bindings;
     private tokenStats;
     private saveTimeout;
@@ -7,7 +8,10 @@ export declare class DshSessionManager {
     private pendingWrite;
     private static exitHooksRegistered;
     private static activeInstances;
-    constructor();
+    private readonly sessionsFile;
+    private readonly tokenStatsFile;
+    constructor(sessionsDir?: string);
+    dispose(): void;
     private registerExitHooks;
     private loadFromDisk;
     scheduleSave(debounceMs?: number): void;
