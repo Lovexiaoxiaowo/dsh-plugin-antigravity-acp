@@ -29,6 +29,34 @@ export declare class DshSessionManager {
      * Formats DSH messages array into contextual prompt text.
      * If isNewSession is true, wraps full history so model knows past context.
      */
+    /**
+     * Extracts both text and image content blocks from a DSH user message.
+     */
+    extractContentBlocks(msg: any, attachmentResolver?: (attachment: any) => Promise<{
+        data: string;
+        mimeType: string;
+    } | null>): Promise<Array<{
+        type: "text";
+        text: string;
+    } | {
+        type: "image";
+        data: string;
+        mimeType: string;
+    }>>;
+    /**
+     * Prepares prompt payload for ACP, supporting multimodal image blocks and history reconstruction.
+     */
+    preparePromptPayload(messages: any[], isNewSession: boolean, attachmentResolver?: (attachment: any) => Promise<{
+        data: string;
+        mimeType: string;
+    } | null>): Promise<Array<{
+        type: "text";
+        text: string;
+    } | {
+        type: "image";
+        data: string;
+        mimeType: string;
+    }>>;
     formatPromptWithHistory(messages: any[], isNewSession: boolean): string;
 }
 //# sourceMappingURL=session-manager.d.ts.map

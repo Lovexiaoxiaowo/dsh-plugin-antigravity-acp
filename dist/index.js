@@ -31,6 +31,27 @@ export class DshAntigravityService {
     onAuthChange;
     sessionManager = new DshSessionManager();
     quotaService = new AntigravityQuotaService(this.sessionManager);
+    attachmentStore = null;
+    setAttachmentStore(store) {
+        this.attachmentStore = store;
+    }
+    async resolveAttachment(attachmentRef) {
+        if (!this.attachmentStore || typeof this.attachmentStore.readImage !== "function")
+            return null;
+        try {
+            const stored = await this.attachmentStore.readImage(attachmentRef);
+            if (stored?.data) {
+                return {
+                    data: Buffer.from(stored.data).toString("base64"),
+                    mimeType: stored.ref?.mediaType || "image/png",
+                };
+            }
+        }
+        catch (err) {
+            console.warn("[antigravity-acp] readImage attachment error:", err);
+        }
+        return null;
+    }
     constructor(config = {}) {
         this.config = config;
         this.projectRoot = path.resolve(import.meta.dirname, "..");
@@ -182,13 +203,13 @@ export class DshAntigravityService {
     /**
      * Sends prompt to session.
      */
-    async prompt(sessionId, text) {
+    async prompt(sessionId, promptPayload) {
         if (!this.client) {
             await this.initialize();
         }
         if (!this.client)
             throw new Error("Failed to initialize Antigravity client");
-        return await this.client.prompt(sessionId, text);
+        return await this.client.prompt(sessionId, promptPayload);
     }
     /**
      * Cancels active prompt in session.
@@ -242,13 +263,16 @@ export class DshAntigravityService {
             };
             this.sessionManager.saveBinding(binding);
         }
-        // Format prompt preserving historical conversation if session was recreated/new
-        let promptText = "";
+        // Format prompt preserving multimodal blocks and history if session was recreated/new
+        let promptPayload = "";
         if (typeof input === "string") {
-            promptText = input;
+            promptPayload = input;
         }
         else if (Array.isArray(input)) {
-            promptText = this.sessionManager.formatPromptWithHistory(input, isNewSession);
+            promptPayload = await this.sessionManager.preparePromptPayload(input, isNewSession, this.resolveAttachment.bind(this));
+        }
+        else {
+            promptPayload = String(input);
         }
         const listenerKey = `stream-${Date.now()}-${Math.random()}`;
         const stepTracker = new AcpStepTracker();
@@ -329,7 +353,7 @@ export class DshAntigravityService {
         const executePrompt = async () => {
             let currentAcpSessionId = acpSessionId;
             try {
-                const response = await this.prompt(currentAcpSessionId, promptText);
+                const response = await this.prompt(currentAcpSessionId, promptPayload);
                 handleSuccess(response);
             }
             catch (err) {
@@ -371,7 +395,7 @@ export class DshAntigravityService {
                             recoveredPrompt = this.sessionManager.formatPromptWithHistory(input, true);
                         }
                         console.log(`[antigravity-acp] Retrying with fresh session ${currentAcpSessionId}...`);
-                        const retryResponse = await this.prompt(currentAcpSessionId, recoveredPrompt);
+                        const retryResponse = await this.prompt(currentAcpSessionId, promptPayload);
                         handleSuccess(retryResponse);
                         return;
                     }
@@ -456,6 +480,14 @@ export function apply(ctx, config = {}) {
             }
             catch (error) {
                 console.error(`[antigravity-acp] settings namespace registration skipped: ${error}`);
+            }
+        });
+    }
+    // 1.5. Inject attachments service to support vision / multimodal image upload:
+    if (typeof ctx.inject === "function") {
+        ctx.inject(["attachments"], (scope) => {
+            if (scope?.attachments) {
+                service.setAttachmentStore(scope.attachments);
             }
         });
     }
@@ -563,7 +595,7 @@ export function apply(ctx, config = {}) {
                                     name: "Gemini 3.8 Flash (Antigravity)",
                                     description: "Google Gemini 3.8 Flash Agent model",
                                     provider,
-                                    inputModalities: ["text"],
+                                    inputModalities: ["text", "image"],
                                 },
                             ];
                         },
@@ -573,7 +605,7 @@ export function apply(ctx, config = {}) {
                                 name: "Gemini 3.8 Flash (Antigravity)",
                                 description: "Google Gemini 3.8 Flash Agent model",
                                 provider,
-                                inputModalities: ["text"],
+                                inputModalities: ["text", "image"],
                                 context: {
                                     contextWindow: 1_000_000,
                                 },

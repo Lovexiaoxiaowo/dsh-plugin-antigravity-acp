@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.12-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.13-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,14 @@
 ---
 
 ## 版本更新日志 (Changelog)
+
+### v1.0.13 (2026-10-31)
+- **浅色与深色模式自适应适配（Light & Dark Theme Parity）**：
+  - 重构底栏状态胶囊（Pill）与悬浮框 Popover 的全部样式 token，全面对齐 DSH 官方规范（`--dsw-alias-label-primary`、`--dsw-alias-label-secondary`、`--dsw-alias-fill-tsp-*`）；
+  - 彻底修复在 DSH 浅色主题下文字发白、5H与周配额看不清、悬浮框卡片与进度条槽底隐形的问题，深浅色主题自由无缝切换。
+- **全模态多模态视觉图片识别支持（Vision / Multimodal Support）**：
+  - 在模型声明中正式开启多模态输入能力（`inputModalities: ["text", "image"]`），彻底消除 DSH 发送图片时「当前模型不支持图片」的拦截提示；
+  - 后端打通 DSH `attachments` 服务与 ACP `ContentBlock::Image` 传输链路，支持通过拖拽、点击上传和剪贴板粘贴向 Gemini 3.8 Flash 发送图片进行视觉理解与问答，与官方 `antigravity.exe` 完全一致。
 
 ### v1.0.12 (2026-10-31)
 - **工具调用步骤序号归一化**：

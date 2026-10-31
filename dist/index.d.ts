@@ -27,6 +27,12 @@ export declare class DshAntigravityService {
     onAuthChange?: () => void;
     readonly sessionManager: DshSessionManager;
     readonly quotaService: AntigravityQuotaService;
+    private attachmentStore;
+    setAttachmentStore(store: any): void;
+    resolveAttachment(attachmentRef: any): Promise<{
+        data: string;
+        mimeType: string;
+    } | null>;
     constructor(config?: AntigravityPluginConfig);
     /**
      * Initializes the service:
@@ -75,7 +81,7 @@ export declare class DshAntigravityService {
     /**
      * Sends prompt to session.
      */
-    prompt(sessionId: string, text: string): Promise<any>;
+    prompt(sessionId: string, promptPayload: string | any[]): Promise<any>;
     /**
      * Cancels active prompt in session.
      */

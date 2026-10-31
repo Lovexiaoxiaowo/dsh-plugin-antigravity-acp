@@ -482,17 +482,17 @@ window.__ModuleLoader__.load({
               fontWeight: '500',
               cursor: 'pointer',
               userSelect: 'none',
-              backgroundColor: 'var(--dsw-alias-bg-layer-2, rgba(255, 255, 255, 0.06))',
+              backgroundColor: 'var(--dsw-alias-fill-tsp-component, var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08)))',
               border: isQuotaWarn
                 ? '1px solid #ef4444'
-                : '1px solid var(--dsw-alias-border, rgba(255, 255, 255, 0.12))',
-              color: isQuotaWarn ? '#ef4444' : 'var(--dsw-alias-text-primary, #e2e8f0)',
+                : '1px solid var(--dsw-alias-border-l1, var(--dsw-alias-border, rgba(127, 127, 127, 0.2)))',
+              color: isQuotaWarn ? '#ef4444' : 'var(--dsw-alias-label-primary, #0f172a)',
               transition: 'all 0.15s ease',
             },
           },
           h('span', { style: { color: quotaColor, fontSize: '12px' } }, '⚡'),
           h('span', null, pillLabel),
-          h('span', { style: { opacity: 0.35 } }, '|'),
+          h('span', { style: { color: 'var(--dsw-alias-label-quaternary, rgba(127, 127, 127, 0.4))' } }, '|'),
           h('span', null, weeklyLabel),
           h(
             'svg',
@@ -527,13 +527,13 @@ window.__ModuleLoader__.load({
                   right: 0,
                   width: '320px',
                   padding: '14px',
-                  backgroundColor: 'var(--dsw-alias-bg-layer-1, #1a1c22)',
-                  border: '1px solid var(--dsw-alias-border, rgba(255, 255, 255, 0.15))',
+                  backgroundColor: 'var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-base, #ffffff))',
+                  border: '1px solid var(--dsw-alias-border-l1, var(--dsw-alias-border, rgba(127, 127, 127, 0.2)))',
                   borderRadius: '10px',
-                  boxShadow: '0 10px 30px rgba(0, 0, 0, 0.45)',
+                  boxShadow: '0 8px 28px rgba(0, 0, 0, 0.22)',
                   zIndex: 9999,
                   fontSize: '12px',
-                  color: 'var(--dsw-alias-text-primary, #e2e8f0)',
+                  color: 'var(--dsw-alias-label-primary, #0f172a)',
                   fontFamily: 'inherit',
                 },
               },
@@ -546,7 +546,7 @@ window.__ModuleLoader__.load({
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     marginBottom: '12px',
-                    borderBottom: '1px solid var(--dsw-alias-border, rgba(255,255,255,0.08))',
+                    borderBottom: '1px solid var(--dsw-alias-border-l1, var(--dsw-alias-border, rgba(127, 127, 127, 0.12)))',
                     paddingBottom: '8px',
                   },
                 },
@@ -577,7 +577,7 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
-                  h('span', { style: { opacity: 0.8 } }, '5小时滑动窗口额度'),
+                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '5小时滑动窗口额度'),
                   h('span', { style: { fontWeight: '600', color: quotaColor } }, (quota && quota.remainingPercent) ? quota.remainingPercent : '正在同步...')
                 ),
                 h(
@@ -586,7 +586,7 @@ window.__ModuleLoader__.load({
                     style: {
                       height: '6px',
                       borderRadius: '3px',
-                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      backgroundColor: 'var(--dsw-alias-fill-tsp-secondary, rgba(127, 127, 127, 0.16))',
                       overflow: 'hidden',
                       marginBottom: '4px',
                     },
@@ -604,7 +604,7 @@ window.__ModuleLoader__.load({
                 quota && quota.resetCountdown
                   ? h(
                       'div',
-                      { style: { fontSize: '10px', opacity: 0.6, textAlign: 'right' } },
+                      { style: { fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #64748b)', textAlign: 'right' } },
                       '下次平滑恢复: ' + quota.resetCountdown
                     )
                   : null
@@ -616,7 +616,7 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
-                  h('span', { style: { opacity: 0.8 } }, '7天自然周配额'),
+                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '7天自然周配额'),
                   h('span', { style: { fontWeight: '600', color: '#10b981' } }, weeklyPercent)
                 ),
                 h(
@@ -625,7 +625,7 @@ window.__ModuleLoader__.load({
                     style: {
                       height: '6px',
                       borderRadius: '3px',
-                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      backgroundColor: 'var(--dsw-alias-fill-tsp-secondary, rgba(127, 127, 127, 0.16))',
                       overflow: 'hidden',
                       marginBottom: '4px',
                     },
@@ -642,7 +642,7 @@ window.__ModuleLoader__.load({
                 ),
                 h(
                   'div',
-                  { style: { fontSize: '10px', opacity: 0.6, textAlign: 'right' } },
+                  { style: { fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #64748b)', textAlign: 'right' } },
                   '周额度充足 · 每周一 08:00 (UTC+8) 重置'
                 )
               ),
@@ -651,10 +651,10 @@ window.__ModuleLoader__.load({
                 'div',
                 {
                   style: {
-                    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                    backgroundColor: 'var(--dsw-alias-fill-tsp-component, rgba(59, 130, 246, 0.08))',
                     padding: '8px 10px',
                     borderRadius: '6px',
-                    border: '1px solid rgba(59, 130, 246, 0.2)',
+                    border: '1px solid rgba(59, 130, 246, 0.25)',
                     marginBottom: '10px',
                     fontSize: '10px',
                     lineHeight: '1.4',
@@ -662,18 +662,18 @@ window.__ModuleLoader__.load({
                 },
                 h(
                   'div',
-                  { style: { fontWeight: '600', color: '#60a5fa', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' } },
+                  { style: { fontWeight: '600', color: 'var(--dsw-alias-primary, #2563eb)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' } },
                   '⏱️ 额度恢复与重置周期'
                 ),
                 h(
                   'div',
-                  { style: { opacity: 0.85, marginBottom: '4px' } },
+                  { style: { color: 'var(--dsw-alias-label-secondary, #334155)', marginBottom: '4px' } },
                   '• 5小时滑动速率窗口：下次平滑恢复 ' +
                     ((quota && quota.resetCountdown) ? quota.resetCountdown : '计算中')
                 ),
                 h(
                   'div',
-                  { style: { opacity: 0.85, color: '#38bdf8' } },
+                  { style: { color: 'var(--dsw-alias-primary, #0284c7)', marginBottom: '2px' } },
                   '• 📅 周额度重置：' +
                     ((quota && quota.weeklyResetLabel) ? quota.weeklyResetLabel : '每周一 08:00 (UTC+8)') +
                     ' (还剩 ' +
@@ -690,14 +690,14 @@ window.__ModuleLoader__.load({
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     fontSize: '10px',
-                    opacity: 0.5,
+                    color: 'var(--dsw-alias-label-tertiary, #94a3b8)',
                   },
                 },
                 h('span', null, '实时同步自 Google 官方额度'),
                 h(
                   'span',
                   {
-                    style: { cursor: 'pointer', textDecoration: 'underline' },
+                    style: { cursor: 'pointer', textDecoration: 'underline', color: 'var(--dsw-alias-primary, #2563eb)' },
                     onClick: (e) => {
                       e.stopPropagation()
                       fetchQuota()

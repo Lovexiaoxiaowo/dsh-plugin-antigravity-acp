@@ -40,7 +40,7 @@ export declare class AntigravityAcpClient {
     /**
      * Prompts the agent with a user request.
      */
-    prompt(sessionId: string, text: string): Promise<any>;
+    prompt(sessionId: string, promptPayload: string | any[]): Promise<any>;
     /**
      * Cancels the currently executing prompt/task.
      */

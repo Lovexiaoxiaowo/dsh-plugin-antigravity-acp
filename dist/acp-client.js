@@ -188,17 +188,15 @@ export class AntigravityAcpClient {
     /**
      * Prompts the agent with a user request.
      */
-    async prompt(sessionId, text) {
+    async prompt(sessionId, promptPayload) {
         if (!this.connection)
             throw new Error("Connection not initialized.");
+        const blocks = typeof promptPayload === "string"
+            ? [{ type: "text", text: promptPayload }]
+            : (Array.isArray(promptPayload) ? promptPayload : [{ type: "text", text: String(promptPayload) }]);
         return await this.connection.prompt({
             sessionId,
-            prompt: [
-                {
-                    type: "text",
-                    text,
-                },
-            ],
+            prompt: blocks,
         });
     }
     /**

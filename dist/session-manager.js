@@ -193,6 +193,140 @@ export class DshSessionManager {
      * Formats DSH messages array into contextual prompt text.
      * If isNewSession is true, wraps full history so model knows past context.
      */
+    /**
+     * Extracts both text and image content blocks from a DSH user message.
+     */
+    async extractContentBlocks(msg, attachmentResolver) {
+        if (!msg)
+            return [{ type: "text", text: "" }];
+        if (typeof msg.content === "string") {
+            return [{ type: "text", text: msg.content }];
+        }
+        if (!Array.isArray(msg.content)) {
+            return [{ type: "text", text: this.extractText(msg) }];
+        }
+        const blocks = [];
+        let accumulatedText = "";
+        for (const part of msg.content) {
+            if (!part)
+                continue;
+            if (typeof part === "string") {
+                accumulatedText += (accumulatedText ? "\n" : "") + part;
+            }
+            else if (part.type === "text") {
+                if (part.text) {
+                    accumulatedText += (accumulatedText ? "\n" : "") + part.text;
+                }
+            }
+            else if (part.type === "image") {
+                if (typeof part.data === "string" && part.mimeType) {
+                    blocks.push({ type: "image", data: part.data, mimeType: part.mimeType });
+                }
+                else if (typeof part.url === "string" && part.url.startsWith("data:")) {
+                    const m = part.url.match(/^data:([^;]+);base64,(.+)$/);
+                    if (m) {
+                        blocks.push({ type: "image", mimeType: m[1], data: m[2] });
+                    }
+                }
+                else if (part.attachment && attachmentResolver) {
+                    try {
+                        const resolved = await attachmentResolver(part.attachment);
+                        if (resolved?.data) {
+                            blocks.push({ type: "image", data: resolved.data, mimeType: resolved.mimeType || "image/png" });
+                        }
+                    }
+                    catch (err) {
+                        console.warn("[antigravity-acp] failed to resolve image attachment:", err);
+                    }
+                }
+                else if (part.path || part.uri) {
+                    const filePath = part.path || part.uri;
+                    if (typeof filePath === "string" && fs.existsSync(filePath)) {
+                        try {
+                            const ext = path.extname(filePath).toLowerCase();
+                            const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : "image/jpeg";
+                            const data = fs.readFileSync(filePath).toString("base64");
+                            blocks.push({ type: "image", data, mimeType: mime });
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        if (accumulatedText) {
+            blocks.unshift({ type: "text", text: accumulatedText });
+        }
+        if (blocks.length === 0) {
+            blocks.push({ type: "text", text: "" });
+        }
+        return blocks;
+    }
+    /**
+     * Prepares prompt payload for ACP, supporting multimodal image blocks and history reconstruction.
+     */
+    async preparePromptPayload(messages, isNewSession, attachmentResolver) {
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return [{ type: "text", text: "Hello" }];
+        }
+        // Find the latest authentic user message
+        let currentMsg = null;
+        let realUserIdx = -1;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            if (msg.role === "user" && !this.isSystemInjection(msg)) {
+                currentMsg = msg;
+                realUserIdx = i;
+                break;
+            }
+        }
+        if (!currentMsg) {
+            for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].role === "user") {
+                    currentMsg = messages[i];
+                    realUserIdx = i;
+                    break;
+                }
+            }
+        }
+        if (!currentMsg) {
+            currentMsg = messages[messages.length - 1];
+            realUserIdx = messages.length - 1;
+        }
+        const currentBlocks = await this.extractContentBlocks(currentMsg, attachmentResolver);
+        // If warm session, ACP preserves previous context; return current turn's blocks
+        if (!isNewSession || messages.length === 1) {
+            return currentBlocks;
+        }
+        // New session with history: prepend prior context to text block
+        const historyLines = [
+            "=== [Context Reconstruction: Conversation History] ===",
+            "Below is the conversation history preceding this turn. Continue directly based on this context.",
+            "",
+        ];
+        const limit = realUserIdx >= 0 ? realUserIdx : messages.length - 1;
+        for (let i = 0; i < limit; i++) {
+            const m = messages[i];
+            if (this.isSystemInjection(m))
+                continue;
+            const role = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
+            const content = this.extractText(m).trim();
+            if (content) {
+                historyLines.push(`[${role}]:\n${content}\n`);
+            }
+        }
+        historyLines.push("=== [Current Turn: User Query] ===");
+        // Merge history into the primary text block
+        const textBlockIdx = currentBlocks.findIndex((b) => b.type === "text");
+        if (textBlockIdx >= 0) {
+            const originalText = currentBlocks[textBlockIdx].text || "";
+            historyLines.push(originalText);
+            currentBlocks[textBlockIdx] = { type: "text", text: historyLines.join("\n") };
+        }
+        else {
+            currentBlocks.unshift({ type: "text", text: historyLines.join("\n") });
+        }
+        return currentBlocks;
+    }
     formatPromptWithHistory(messages, isNewSession) {
         if (!Array.isArray(messages) || messages.length === 0) {
             return "Hello";

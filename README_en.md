@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.12-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.13-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,14 @@ The plugin includes a dedicated settings UI and background services. Once instal
 ---
 
 ## Changelog
+
+### v1.0.13 (2026-10-31)
+- **Light & Dark Theme Parity**:
+  - Refactored all style tokens for the dock pill and Popover using official DSH token design system (`--dsw-alias-label-primary`, `--dsw-alias-label-secondary`, `--dsw-alias-fill-tsp-*`).
+  - Completely resolved contrast issues under DSH light mode: 5H and weekly quota text, progress bar tracks, and popover cards are now crystal clear across both themes.
+- **Multimodal Vision & Image Recognition Support**:
+  - Enabled `inputModalities: ["text", "image"]` in model capabilities, fixing the DSH UI block "The current model does not support images".
+  - Connected DSH `attachments` service with ACP `ContentBlock::Image` standard payload, matching the multimodal experience of standalone `antigravity.exe`.
 
 ### v1.0.9 (2026-10-30)
 - **Fix `unknown tool` exceptions & disappearing message content**:
