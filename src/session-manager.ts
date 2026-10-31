@@ -10,9 +10,25 @@ const TOKEN_STATS_FILE = path.join(DEFAULT_SESSIONS_DIR, "token_stats.json");
 export class DshSessionManager {
   private bindings = new Map<string, AcpSessionBinding>();
   private tokenStats = new Map<string, TokenAccounting>();
+  private saveTimeout: NodeJS.Timeout | null = null;
+  private isWriting = false;
+  private pendingWrite = false;
 
   constructor() {
     this.loadFromDisk();
+    this.registerExitHooks();
+  }
+
+  private registerExitHooks(): void {
+    process.once("exit", () => {
+      this.flushSync();
+    });
+    process.once("SIGINT", () => {
+      this.flushSync();
+    });
+    process.once("SIGTERM", () => {
+      this.flushSync();
+    });
   }
 
   private loadFromDisk(): void {
@@ -45,7 +61,67 @@ export class DshSessionManager {
     }
   }
 
-  private saveToDisk(): void {
+  scheduleSave(debounceMs = 500): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+    this.saveTimeout = setTimeout(() => {
+      this.saveTimeout = null;
+      void this.flush();
+    }, debounceMs);
+  }
+
+  async flush(): Promise<void> {
+    if (this.isWriting) {
+      this.pendingWrite = true;
+      return;
+    }
+    this.isWriting = true;
+    try {
+      if (!fs.existsSync(DEFAULT_SESSIONS_DIR)) {
+        await fs.promises.mkdir(DEFAULT_SESSIONS_DIR, { recursive: true });
+      }
+
+      const list = Array.from(this.bindings.values());
+      const sessionsJson = JSON.stringify(list, null, 2);
+      const tmpSessions = `${SESSIONS_FILE}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+      await fs.promises.writeFile(tmpSessions, sessionsJson, "utf-8");
+      try {
+        await fs.promises.rename(tmpSessions, SESSIONS_FILE);
+      } catch {
+        await fs.promises.copyFile(tmpSessions, SESSIONS_FILE);
+        await fs.promises.unlink(tmpSessions).catch(() => {});
+      }
+
+      const statsObj: Record<string, TokenAccounting> = {};
+      for (const [key, val] of this.tokenStats.entries()) {
+        statsObj[key] = val;
+      }
+      const tokenStatsJson = JSON.stringify(statsObj, null, 2);
+      const tmpTokens = `${TOKEN_STATS_FILE}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+      await fs.promises.writeFile(tmpTokens, tokenStatsJson, "utf-8");
+      try {
+        await fs.promises.rename(tmpTokens, TOKEN_STATS_FILE);
+      } catch {
+        await fs.promises.copyFile(tmpTokens, TOKEN_STATS_FILE);
+        await fs.promises.unlink(tmpTokens).catch(() => {});
+      }
+    } catch (err) {
+      console.warn("[antigravity-acp] failed to persist sessions/tokens to disk:", err);
+    } finally {
+      this.isWriting = false;
+      if (this.pendingWrite) {
+        this.pendingWrite = false;
+        void this.flush();
+      }
+    }
+  }
+
+  flushSync(): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
     try {
       if (!fs.existsSync(DEFAULT_SESSIONS_DIR)) {
         fs.mkdirSync(DEFAULT_SESSIONS_DIR, { recursive: true });
@@ -59,8 +135,12 @@ export class DshSessionManager {
       }
       fs.writeFileSync(TOKEN_STATS_FILE, JSON.stringify(statsObj, null, 2), "utf-8");
     } catch (err) {
-      console.warn("[antigravity-acp] failed to persist sessions/tokens to disk:", err);
+      console.warn("[antigravity-acp] failed to persist sessions/tokens synchronously:", err);
     }
+  }
+
+  private saveToDisk(): void {
+    this.scheduleSave(500);
   }
 
   getBinding(dshSessionId: string): AcpSessionBinding | undefined {
