@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+﻿import { describe, it, expect } from "vitest";
 import { AcpStepTracker, mapSessionUpdate, DshStreamWriter } from "../src/event-mapper.js";
 
 describe("event-mapper protocol suite", () => {
@@ -192,5 +192,30 @@ describe("event-mapper protocol suite", () => {
     const combinedText = textDeltas.join("");
     expect(combinedText).toBe("Final message paragraph 1 Final message paragraph 2");
     expect(combinedText).not.toContain("Late tool execution");
+  });
+
+  it("Lane 14: mapSessionUpdate parses official upstream cache_read_tokens without truncation", () => {
+    const tracker = new AcpStepTracker();
+    const notification: any = {
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "usage_update",
+        usage: {
+          input_tokens: 2922,
+          cache_read_tokens: 41423,
+          output_tokens: 260,
+          thought_tokens: 150,
+        },
+      },
+    };
+    const activities = mapSessionUpdate(notification, tracker);
+    expect(activities.length).toBe(1);
+    expect(activities[0].type).toBe("usage");
+    const usage = (activities[0] as any).usage;
+    expect(usage.inputTokens).toBe(2922);
+    expect(usage.cachedTokens).toBe(41423);
+    expect(usage.outputTokens).toBe(260);
+    expect(usage.reasoningTokens).toBe(150);
+    expect(usage.totalTokens).toBe(2922 + 41423 + 260);
   });
 });

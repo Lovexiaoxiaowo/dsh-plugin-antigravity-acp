@@ -237,14 +237,44 @@ export class DshSessionManager {
     const reasonTokens = Number(snapshot.reasoningTokens || 0);
     const explicitCached = Number(snapshot.cachedTokens || 0);
 
-    // Compute genuine turn-level tokens for this specific step/turn.
-    let turnIn = 0;
-    if (inTokens > 0 && inTokens <= 1_000_000) {
-      turnIn = inTokens;
-    } else if (promptChars > 0) {
-      turnIn = Math.max(10, Math.ceil(promptChars / 3.5));
+    let turnCached = 0;
+    let uncachedInput = 0;
+
+    if (explicitCached > 0) {
+      turnCached = explicitCached;
+      if (inTokens > explicitCached) {
+        // OpenAI / Anthropic 风格：inTokens 是包含了缓存的总输入
+        uncachedInput = inTokens - explicitCached;
+      } else if (inTokens > 0 && inTokens <= 1_000_000) {
+        // Gemini / ACP 官方分桶风格：inTokens 已经是未缓存输入
+        uncachedInput = inTokens;
+      } else if (promptChars > 0) {
+        uncachedInput = Math.max(1, Math.ceil(promptChars / 3.5));
+      } else {
+        uncachedInput = 50;
+      }
     } else {
-      turnIn = 50;
+      // 没有显式 cachedTokens，根据 warm session 和 priorContext 估算
+      let estimatedIn = 0;
+      if (inTokens > 0 && inTokens <= 1_000_000) {
+        estimatedIn = inTokens;
+      } else if (promptChars > 0) {
+        estimatedIn = Math.max(10, Math.ceil(promptChars / 3.5));
+      } else {
+        estimatedIn = 50;
+      }
+
+      const binding = this.bindings.get(dshSessionId);
+      const priorContext = current.currentContextTokens || 0;
+      const isWarmSession = (binding && (binding.messageCount || 0) > 1) || priorContext > 0;
+      if (isWarmSession && estimatedIn > 50) {
+        const estimatedNewQueryTokens = promptChars > 0 ? Math.max(10, Math.ceil(promptChars / 3.5)) : 50;
+        if (estimatedIn > estimatedNewQueryTokens) {
+          const contextBase = priorContext > 0 ? priorContext : (estimatedIn - estimatedNewQueryTokens);
+          turnCached = Math.min(contextBase, estimatedIn - estimatedNewQueryTokens);
+        }
+      }
+      uncachedInput = Math.max(1, estimatedIn - turnCached);
     }
 
     let turnOut = 0;
@@ -257,27 +287,6 @@ export class DshSessionManager {
     }
 
     const turnReason = reasonTokens > 0 ? reasonTokens : 0;
-
-    // Respect authentic cached tokens directly from upstream ACP if provided
-    let turnCached = 0;
-    if (explicitCached > 0) {
-      turnCached = Math.min(turnIn, explicitCached);
-    } else {
-      // In warm multi-turn sessions, Gemini automatically caches the conversation prefix.
-      const binding = this.bindings.get(dshSessionId);
-      const priorContext = current.currentContextTokens || 0;
-      const isWarmSession = (binding && (binding.messageCount || 0) > 1) || priorContext > 0;
-      if (isWarmSession && turnIn > 50) {
-        const estimatedNewQueryTokens = promptChars > 0 ? Math.max(10, Math.ceil(promptChars / 3.5)) : 50;
-        if (turnIn > estimatedNewQueryTokens) {
-          const contextBase = priorContext > 0 ? priorContext : (turnIn - estimatedNewQueryTokens);
-          turnCached = Math.min(contextBase, turnIn - estimatedNewQueryTokens);
-        }
-      }
-    }
-
-    // Ensure uncached input is positive and disjoint from cached
-    const uncachedInput = Math.max(1, turnIn - turnCached);
     const turnTotal = uncachedInput + turnCached + turnOut;
 
     // Track cumulative session totals in memory
@@ -290,7 +299,7 @@ export class DshSessionManager {
     // Active context window represents the FULL active session payload, not just this turn single-step delta!
     const contextEstimate = typeof totalContextTokens === "number" && totalContextTokens > 0
       ? totalContextTokens
-      : Math.max(current.currentContextTokens || 0, turnIn);
+      : Math.max(current.currentContextTokens || 0, uncachedInput + turnCached + turnOut);
     current.currentContextTokens = contextEstimate;
 
     this.tokenStats.set(dshSessionId, current);

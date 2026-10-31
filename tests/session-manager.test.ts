@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+﻿import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -211,5 +211,28 @@ describe("session-manager lifecycle and token suite (Sandboxed)", () => {
     const tokens = JSON.parse(fs.readFileSync(tokensFile, "utf-8"));
     expect(tokens["flush-sync-test"]).toBeDefined();
     expect(tokens["flush-sync-test"].totalTokens).toBe(150);
+  });
+
+  it("Lane 28: accurately preserves high cache hits when uncached input is smaller than cached tokens", () => {
+    // In production ACP with warm Gemini session:
+    // uncached inputTokens = 2922, cachedTokens = 41423, output = 260
+    const usage = mgr.recordUsage("gemini-cache-hit-session", {
+      inputTokens: 2922,
+      cachedTokens: 41423,
+      outputTokens: 260,
+      reasoningTokens: 150,
+    }, 100, 200);
+
+    expect(usage.cachedTokens).toBe(41423);
+    expect(usage.inputTokens).toBe(2922);
+    expect(usage.outputTokens).toBe(260);
+    expect(usage.reasoningTokens).toBe(150);
+    expect(usage.totalTokens).toBe(2922 + 41423 + 260);
+
+    // Context depth retains the full active payload (44605), not dropping to small promptChars
+    expect(usage.currentContextTokens).toBeGreaterThanOrEqual(44605);
+
+    const hitRate = usage.cachedTokens / (usage.inputTokens + usage.cachedTokens);
+    expect(hitRate).toBeGreaterThan(0.93); // ~93.4% genuine hit rate!
   });
 });

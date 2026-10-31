@@ -90,7 +90,7 @@ import { AntigravityAcpClient } from "./acp-client.js";
 import { DshSessionManager } from "./session-manager.js";
 import { AntigravityQuotaService } from "./quota-service.js";
 import { mapSessionUpdate, DshStreamWriter, AcpStepTracker } from "./event-mapper.js";
-import type { AntigravityPluginConfig, ReasoningEffort, SessionQuotaSnapshot } from "./types.js";
+import type { AntigravityPluginConfig, ReasoningEffort, SessionQuotaSnapshot, TokenAccounting } from "./types.js";
 
 export * from "./types.js";
 export * from "./bootstrapper.js";
@@ -504,6 +504,10 @@ export class DshAntigravityService {
     const listenerKey = `stream-${Date.now()}-${Math.random()}`;
     const stepTracker = new AcpStepTracker();
 
+    let latestStreamUsage: Partial<TokenAccounting> | null = null;
+    let accumulatedOutputTokens = 0;
+    let accumulatedReasoningTokens = 0;
+
     type QueueItem = { chunk?: any; error?: any; done?: boolean };
     const queue = new StreamingBackpressureQueue<QueueItem>({
       highWatermark: 500,
@@ -545,8 +549,6 @@ export class DshAntigravityService {
         if (activity.type === "thought") {
           writer.writeThinking(activity.delta);
         } else if (activity.type === "tool") {
-          // If the model invokes subagent in ACP and DSH has subagent enabled,
-          // bridge it directly to DSH native subagent engine!
           if ((activity as any).isSubagent && (activity as any).isStart && hasSubagentTool) {
             const raw = (activity as any).rawArgs || {};
             let subagentList: any[] = [];
@@ -571,8 +573,14 @@ export class DshAntigravityService {
         } else if (activity.type === "text") {
           writer.writeText(activity.delta);
         } else if (activity.type === "usage") {
-          // Track internally in sessionManager for quota and memory
-          this.sessionManager.recordUsage(dshSessionId, activity.usage);
+          // Buffer latest step usage without duplicate turn-level accumulation
+          latestStreamUsage = activity.usage;
+          if (activity.usage.outputTokens) {
+            accumulatedOutputTokens += Number(activity.usage.outputTokens);
+          }
+          if (activity.usage.reasoningTokens) {
+            accumulatedReasoningTokens += Number(activity.usage.reasoningTokens);
+          }
         }
       }
     });
@@ -585,7 +593,7 @@ export class DshAntigravityService {
       if (acpSessionId) {
         this.cancel(acpSessionId).catch(() => {});
       }
-      queue.clear(); // Immediately dump stale buffered items
+      queue.clear();
       writer.finish("stop");
       queue.push({ done: true });
     };
@@ -595,17 +603,37 @@ export class DshAntigravityService {
     const handleSuccess = (response: any) => {
       this.sessionManager.incrementMessageCount(dshSessionId);
 
-      // Extract genuine turn-level tokens from response.usage, never letting account-wide quota override it
       const turnUsage = response?.usage || response?.usageMetadata || response?._meta?.usage;
       const quota = response?._meta?.quota;
-      const rawTokens = (turnUsage && (turnUsage.inputTokens || turnUsage.input_tokens || turnUsage.promptTokenCount))
+      const responseTokens = (turnUsage && (turnUsage.inputTokens || turnUsage.input_tokens || turnUsage.promptTokenCount))
         ? turnUsage
         : (quota?.token_count && Number(quota.token_count.input_tokens) <= 1_000_000 ? quota.token_count : null);
+
+      const effectiveUsage: Partial<TokenAccounting> = latestStreamUsage
+        ? {
+            inputTokens: latestStreamUsage.inputTokens,
+            cachedTokens: latestStreamUsage.cachedTokens,
+            outputTokens: Math.max(accumulatedOutputTokens, Number(latestStreamUsage.outputTokens || 0)),
+            reasoningTokens: Math.max(accumulatedReasoningTokens, Number(latestStreamUsage.reasoningTokens || 0)),
+          }
+        : (responseTokens ? {
+            inputTokens: Number(responseTokens.input_tokens || responseTokens.inputTokens || responseTokens.promptTokenCount || 0),
+            outputTokens: Number(responseTokens.output_tokens || responseTokens.outputTokens || responseTokens.candidatesTokenCount || 0),
+            reasoningTokens: Number(responseTokens.thought_tokens || responseTokens.thoughtTokens || responseTokens.reasoningTokens || 0),
+            cachedTokens: Number(
+              responseTokens.cache_read_tokens ||
+              responseTokens.cached_tokens ||
+              responseTokens.cachedContentTokenCount ||
+              responseTokens.cached_content_token_count ||
+              responseTokens.cacheReadTokens ||
+              responseTokens.cache_read_input_tokens ||
+              0
+            ),
+          } : {});
 
       const promptChars = typeof promptPayload === "string" ? promptPayload.length : JSON.stringify(promptPayload).length;
       const outputChars = writer.getRecordedTextLength();
 
-      // Calculate authentic cumulative session context tokens across all history turns
       let totalContextTokens = 0;
       if (Array.isArray(input)) {
         const allTextLength = input
@@ -616,21 +644,10 @@ export class DshAntigravityService {
         totalContextTokens = Math.max(100, Math.ceil(input.length / 3.2));
       }
 
+      // Single authoritative turn-level accounting commit
       const finalUsage = this.sessionManager.recordUsage(
         dshSessionId,
-        rawTokens ? {
-          inputTokens: Number(rawTokens.input_tokens || rawTokens.inputTokens || rawTokens.promptTokenCount || 0),
-          outputTokens: Number(rawTokens.output_tokens || rawTokens.outputTokens || rawTokens.candidatesTokenCount || 0),
-          reasoningTokens: Number(rawTokens.thought_tokens || rawTokens.thoughtTokens || rawTokens.reasoningTokens || 0),
-          cachedTokens: Number(
-            rawTokens.cached_tokens ||
-            rawTokens.cachedContentTokenCount ||
-            rawTokens.cached_content_token_count ||
-            rawTokens.cacheReadTokens ||
-            rawTokens.cache_read_input_tokens ||
-            0
-          ),
-        } : {},
+        effectiveUsage,
         promptChars,
         outputChars,
         totalContextTokens

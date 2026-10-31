@@ -194,21 +194,31 @@ export function mapSessionUpdate(notification, stepTracker) {
             // Ignore account-level cumulative quota meters (>1M tokens) to prevent DSH token counter explosion
             const tokens = update.token_count || update.usage || update.usageMetadata;
             if (tokens) {
-                const inTokens = Number(tokens.input_tokens || tokens.inputTokens || tokens.promptTokenCount || 0);
-                const outTokens = Number(tokens.output_tokens || tokens.outputTokens || tokens.candidatesTokenCount || 0);
-                const cached = Number(tokens.cached_tokens ||
+                const inTokens = Number(tokens.input_tokens ||
+                    tokens.inputTokens ||
+                    tokens.promptTokenCount ||
+                    tokens.prompt_tokens ||
+                    0);
+                const outTokens = Number(tokens.output_tokens ||
+                    tokens.outputTokens ||
+                    tokens.candidatesTokenCount ||
+                    tokens.completion_tokens ||
+                    0);
+                const cached = Number(tokens.cache_read_tokens ||
+                    tokens.cached_tokens ||
                     tokens.cachedContentTokenCount ||
                     tokens.cached_content_token_count ||
                     tokens.cacheReadTokens ||
                     tokens.cache_read_input_tokens ||
                     0);
-                if (inTokens > 0 && inTokens <= 1_000_000) {
+                if ((inTokens > 0 || cached > 0) && inTokens <= 1_000_000) {
+                    const promptTotal = inTokens > cached ? inTokens : (inTokens + cached);
                     const usage = {
                         inputTokens: inTokens,
                         outputTokens: outTokens,
                         reasoningTokens: Number(tokens.thought_tokens || tokens.thoughtTokens || tokens.reasoningTokens || 0),
                         cachedTokens: cached,
-                        totalTokens: inTokens + outTokens,
+                        totalTokens: promptTotal + outTokens,
                     };
                     return [{ type: "usage", usage }];
                 }
