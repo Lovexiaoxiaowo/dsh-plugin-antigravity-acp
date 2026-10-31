@@ -88,6 +88,7 @@ export interface QuotaGroupSummary {
     is5hCooling: boolean;
 }
 export interface QuotaSummary {
+    isStale?: boolean;
     model: string;
     displayName: string;
     remainingFraction: number;
@@ -110,6 +111,7 @@ export interface QuotaSummary {
     groups?: QuotaGroupSummary[];
 }
 export interface SessionQuotaSnapshot {
+    isStale?: boolean;
     quota?: QuotaSummary;
     sessionTokens: TokenAccounting;
     contextUsage: {

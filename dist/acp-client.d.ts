@@ -11,6 +11,8 @@ export declare class AntigravityAcpClient {
     private readonly serverBinaryPath;
     private readonly defaultArgs;
     private readonly handlers;
+    pauseStdout(): void;
+    resumeStdout(): void;
     private childProcess;
     private connection;
     private currentSessionId;

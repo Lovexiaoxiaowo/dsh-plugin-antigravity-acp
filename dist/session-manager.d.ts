@@ -2,8 +2,17 @@ import type { AcpSessionBinding, TokenAccounting } from "./types.js";
 export declare class DshSessionManager {
     private bindings;
     private tokenStats;
+    private saveTimeout;
+    private isWriting;
+    private pendingWrite;
+    private static exitHooksRegistered;
+    private static activeInstances;
     constructor();
+    private registerExitHooks;
     private loadFromDisk;
+    scheduleSave(debounceMs?: number): void;
+    flush(): Promise<void>;
+    flushSync(): void;
     private saveToDisk;
     getBinding(dshSessionId: string): AcpSessionBinding | undefined;
     saveBinding(binding: AcpSessionBinding): void;

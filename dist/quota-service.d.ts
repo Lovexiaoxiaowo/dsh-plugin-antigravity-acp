@@ -6,6 +6,9 @@ export declare class AntigravityQuotaService {
     private cachedTierData;
     private cachedSummaryData;
     private lastFetchTime;
+    private consecutiveFailures;
+    private circuitOpenUntil;
+    private isCircuitOpen;
     private readonly CACHE_TTL_MS;
     constructor(sessionManager: DshSessionManager);
     private postWithFallback;

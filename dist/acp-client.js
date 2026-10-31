@@ -21,6 +21,16 @@ export class AntigravityAcpClient {
     serverBinaryPath;
     defaultArgs;
     handlers;
+    pauseStdout() {
+        if (this.childProcess?.stdout && !this.childProcess.stdout.isPaused()) {
+            this.childProcess.stdout.pause();
+        }
+    }
+    resumeStdout() {
+        if (this.childProcess?.stdout && this.childProcess.stdout.isPaused()) {
+            this.childProcess.stdout.resume();
+        }
+    }
     childProcess = null;
     connection = null;
     currentSessionId = null;
