@@ -601,7 +601,7 @@ export function apply(ctx, config = {}) {
                         },
                         resolveModel(provider, model) {
                             return Promise.resolve({
-                                id: "gemini-3.8-flash",
+                                id: model || "gemini-3.8-flash",
                                 name: "Gemini 3.8 Flash (Antigravity)",
                                 description: "Google Gemini 3.8 Flash Agent model",
                                 provider,

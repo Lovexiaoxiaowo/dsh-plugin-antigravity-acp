@@ -665,7 +665,7 @@ export function apply(ctx: any, config: AntigravityPluginConfig = {}) {
             },
             resolveModel(provider: string, model: string) {
               return Promise.resolve({
-                id: "gemini-3.8-flash",
+                id: model || "gemini-3.8-flash",
                 name: "Gemini 3.8 Flash (Antigravity)",
                 description: "Google Gemini 3.8 Flash Agent model",
                 provider,
