@@ -1,3 +1,4 @@
+import { type ChildProcess } from "node:child_process";
 import { type RequestPermissionRequest, type RequestPermissionResponse, type SessionNotification, type InitializeResponse } from "@agentclientprotocol/sdk";
 import type { PermissionMode, ReasoningEffort } from "./types.js";
 export interface AcpClientEventHandlers {
@@ -14,6 +15,7 @@ export declare class AntigravityAcpClient {
     private childProcess;
     private connection;
     private currentSessionId;
+    private isPaused;
     constructor(serverBinaryPath: string, defaultArgs?: string[], handlers?: AcpClientEventHandlers);
     /**
      * Spawns the official agy_acp_server and establishes the JSON-RPC stdio connection.
@@ -45,6 +47,26 @@ export declare class AntigravityAcpClient {
      * Cancels the currently executing prompt/task.
      */
     cancel(sessionId: string): Promise<void>;
+    /**
+     * Pauses incoming stdout stream from the ACP process to apply backpressure.
+     */
+    pauseStdout(): void;
+    /**
+     * Resumes incoming stdout stream from the ACP process when backpressure drains.
+     */
+    resumeStdout(): void;
+    /**
+     * Returns whether the client stdout stream is currently paused.
+     */
+    isStdoutPaused(): boolean;
+    /**
+     * Attaches or overrides the child process (used for testing or wrapping).
+     */
+    attachProcess(proc: ChildProcess | any): void;
+    /**
+     * Returns the underlying child process if spawned.
+     */
+    getChildProcess(): ChildProcess | null;
     /**
      * Stops the client and kills the background process cleanly.
      */

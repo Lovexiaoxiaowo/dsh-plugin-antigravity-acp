@@ -14,10 +14,76 @@ export * from "./quota-service.js";
 export * from "./event-mapper.js";
 export const name = "dsh-plugin-antigravity-acp";
 export const inject = [];
-/**
- * Main Service class for DSH Integration.
- * Fits into DeepSeek Harness (DSH) lifecycle, Cordis service architecture, or standalone usage.
- */
+export class StreamingBackpressureQueue {
+    options;
+    queue = [];
+    resolver = null;
+    isPaused = false;
+    isFinished = false;
+    highWatermark;
+    lowWatermark;
+    criticalWatermark;
+    constructor(options = {}) {
+        this.options = options;
+        this.highWatermark = options.highWatermark ?? 500;
+        this.lowWatermark = options.lowWatermark ?? 200;
+        this.criticalWatermark = options.criticalWatermark ?? 1000;
+    }
+    get length() {
+        return this.queue.length;
+    }
+    get paused() {
+        return this.isPaused;
+    }
+    push(item) {
+        if (this.isFinished && !item.done)
+            return false;
+        if (this.resolver) {
+            const r = this.resolver;
+            this.resolver = null;
+            r(item);
+            return true;
+        }
+        // Critical threshold (>1000 items): safely drop non-critical chunks (reasoning-delta) to prevent OOM
+        if (this.queue.length >= this.criticalWatermark && item.chunk?.type === "reasoning-delta") {
+            return false;
+        }
+        this.queue.push(item);
+        // High watermark (>= 500 items): trigger backpressure pause on client stdout
+        if (!this.isPaused && this.queue.length >= this.highWatermark) {
+            this.isPaused = true;
+            this.options.onPause?.();
+        }
+        return true;
+    }
+    next() {
+        if (this.queue.length > 0) {
+            const item = this.queue.shift();
+            // Low watermark (<= 200 items): release backpressure resume on client stdout
+            if (this.isPaused && this.queue.length <= this.lowWatermark) {
+                this.isPaused = false;
+                this.options.onResume?.();
+            }
+            return Promise.resolve(item);
+        }
+        return new Promise((resolve) => {
+            this.resolver = resolve;
+        });
+    }
+    resume() {
+        if (this.isPaused) {
+            this.isPaused = false;
+            this.options.onResume?.();
+        }
+    }
+    clear() {
+        this.queue.length = 0;
+    }
+    finish() {
+        this.isFinished = true;
+        this.resume();
+    }
+}
 export class DshAntigravityService {
     config;
     client = null;
@@ -32,6 +98,9 @@ export class DshAntigravityService {
     sessionManager = new DshSessionManager();
     quotaService = new AntigravityQuotaService(this.sessionManager);
     attachmentStore = null;
+    getClient() {
+        return this.client;
+    }
     setAttachmentStore(store) {
         this.attachmentStore = store;
     }
@@ -279,32 +348,23 @@ export class DshAntigravityService {
         }
         const listenerKey = `stream-${Date.now()}-${Math.random()}`;
         const stepTracker = new AcpStepTracker();
-        const queue = [];
-        let resolver = null;
+        const queue = new StreamingBackpressureQueue({
+            highWatermark: 500,
+            lowWatermark: 200,
+            criticalWatermark: 1000,
+            onPause: () => {
+                this.client?.pauseStdout();
+            },
+            onResume: () => {
+                this.client?.resumeStdout();
+            },
+        });
         let isFinished = false;
         const pushItem = (item) => {
-            if (isFinished && !item.done)
-                return;
-            if (resolver) {
-                const r = resolver;
-                resolver = null;
-                r(item);
-            }
-            else {
-                // Application buffer protection: drop redundant intermediate thinking tokens if severely lagged (>1000 items)
-                if (queue.length > 1000 && item.chunk?.type === "reasoning-delta") {
-                    return;
-                }
-                queue.push(item);
-            }
+            queue.push(item);
         };
         const nextItem = () => {
-            if (queue.length > 0) {
-                return Promise.resolve(queue.shift());
-            }
-            return new Promise((resolve) => {
-                resolver = resolve;
-            });
+            return queue.next();
         };
         // DSH Stream Writer ensures strict lifecycle:
         // block-start (reasoning) -> reasoning-delta -> block-end -> block-start (text) -> text-delta -> block-end
@@ -361,19 +421,14 @@ export class DshAntigravityService {
             if (isFinished)
                 return;
             isFinished = true;
+            queue.finish();
+            this.client?.resumeStdout();
             if (acpSessionId) {
                 this.cancel(acpSessionId).catch(() => { });
             }
-            queue.length = 0; // Immediately dump stale buffered items
+            queue.clear(); // Immediately dump stale buffered items
             writer.finish("stop");
-            if (resolver) {
-                const r = resolver;
-                resolver = null;
-                r({ done: true });
-            }
-            else {
-                queue.push({ done: true });
-            }
+            queue.push({ done: true });
         };
         options?.signal?.addEventListener("abort", abortHandler, { once: true });
         const handleSuccess = (response) => {
@@ -482,9 +537,11 @@ export class DshAntigravityService {
             }
         }
         finally {
+            queue.finish();
+            this.client?.resumeStdout();
             this.notificationListeners.delete(listenerKey);
             options?.signal?.removeEventListener("abort", abortHandler);
-            queue.length = 0;
+            queue.clear();
             if (!isFinished && acpSessionId) {
                 this.cancel(acpSessionId).catch(() => { });
             }

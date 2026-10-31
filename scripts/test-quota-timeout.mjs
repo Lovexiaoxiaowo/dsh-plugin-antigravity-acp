@@ -16,33 +16,30 @@ async function run() {
   const port = hungServer.address().port;
   const hungUrl = `http://127.0.0.1:${port}/hung`;
 
-  // Test single fetch timeout with AbortSignal.timeout(5000)
-  console.log(`Testing fetch against hung endpoint ${hungUrl}...`);
-  const start = performance.now();
-  let timedOut = false;
-  try {
-    await fetch(hungUrl, {
-      method: "POST",
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch (err) {
-    timedOut = true;
-    console.log(`Fetch aborted as expected: ${err.name} - ${err.message}`);
-  }
-  const duration = performance.now() - start;
-  hungServer.close();
-
-  assert(timedOut, "Expected request to abort with timeout");
-  console.log(`Aborted after ${duration.toFixed(2)}ms (Perf budget: < 5200ms)`);
-  assert(duration >= 4900 && duration <= 5200, `Duration out of expected 5000ms window: ${duration}ms`);
-
-  // 2. Test QuotaService instantiation and offline snapshot generation
+  // 2. Instantiate QuotaService configured with hung upstream endpoint
+  console.log(`Testing AntigravityQuotaService against hung endpoint ${hungUrl}...`);
   const sessionManager = new DshSessionManager();
-  const quotaService = new AntigravityQuotaService(sessionManager);
+  const quotaService = new AntigravityQuotaService(sessionManager, [hungUrl]);
+
+  const start = performance.now();
   const snapshot = await quotaService.getSnapshot();
+  const duration = performance.now() - start;
+
+  hungServer.close();
+  if (typeof hungServer.closeAllConnections === "function") {
+    hungServer.closeAllConnections();
+  }
+
+  console.log(`QuotaService.getSnapshot() completed in ${duration.toFixed(2)}ms (Perf budget: 4900ms - 5500ms)`);
+  assert(duration >= 4900 && duration <= 5500, `Duration out of expected 5000ms window: ${duration}ms`);
+
+  // Verify that a hung upstream endpoint returns a stale snapshot
   assert(snapshot, "Expected valid snapshot structure");
+  assert(snapshot.isStale === true, "Expected snapshot to be stale due to upstream timeout");
+  assert(snapshot.quota, "Expected quota structure");
+  assert(snapshot.quota.isStale === true, "Expected quota.isStale to be true");
   assert(snapshot.contextUsage, "Expected contextUsage structure");
-  console.log("Snapshot successfully returned with contextUsage:", snapshot.contextUsage.percentage);
+  console.log("Snapshot successfully returned stale snapshot with contextUsage:", snapshot.contextUsage.percentage);
 
   console.log("✅ [PR-02 PASS]: All timeout and circuit breaker assertions and perf gates passed!");
 }

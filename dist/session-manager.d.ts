@@ -16,6 +16,7 @@ export declare class DshSessionManager {
     private loadFromDisk;
     scheduleSave(debounceMs?: number): void;
     flush(): Promise<void>;
+    private atomicWriteFileSync;
     flushSync(): void;
     private saveToDisk;
     getBinding(dshSessionId: string): AcpSessionBinding | undefined;

@@ -148,6 +148,24 @@ export class DshSessionManager {
     }
   }
 
+  private atomicWriteFileSync(targetFile: string, data: string): void {
+    const tmpFile = path.join(this.sessionsDir, `${path.basename(targetFile)}.${crypto.randomUUID()}.tmp`);
+    try {
+      fs.writeFileSync(tmpFile, data, "utf-8");
+      try {
+        fs.renameSync(tmpFile, targetFile);
+      } catch {
+        fs.writeFileSync(targetFile, data, "utf-8");
+      }
+    } finally {
+      try {
+        if (fs.existsSync(tmpFile)) {
+          fs.unlinkSync(tmpFile);
+        }
+      } catch {}
+    }
+  }
+
   flushSync(): void {
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
@@ -158,33 +176,13 @@ export class DshSessionManager {
         fs.mkdirSync(this.sessionsDir, { recursive: true });
       }
       const list = Array.from(this.bindings.values());
-      const tmpSessions = path.join(this.sessionsDir, `sessions.${crypto.randomUUID()}.tmp`);
-      try {
-        fs.writeFileSync(tmpSessions, JSON.stringify(list, null, 2), "utf-8");
-        try {
-          fs.renameSync(tmpSessions, this.sessionsFile);
-        } catch {
-          fs.writeFileSync(this.sessionsFile, JSON.stringify(list, null, 2), "utf-8");
-        }
-      } finally {
-        try { if (fs.existsSync(tmpSessions)) fs.unlinkSync(tmpSessions); } catch {}
-      }
+      this.atomicWriteFileSync(this.sessionsFile, JSON.stringify(list, null, 2));
 
       const statsObj: Record<string, TokenAccounting> = {};
       for (const [key, val] of this.tokenStats.entries()) {
         statsObj[key] = val;
       }
-      const tmpTokens = path.join(this.sessionsDir, `token_stats.${crypto.randomUUID()}.tmp`);
-      try {
-        fs.writeFileSync(tmpTokens, JSON.stringify(statsObj, null, 2), "utf-8");
-        try {
-          fs.renameSync(tmpTokens, this.tokenStatsFile);
-        } catch {
-          fs.writeFileSync(this.tokenStatsFile, JSON.stringify(statsObj, null, 2), "utf-8");
-        }
-      } finally {
-        try { if (fs.existsSync(tmpTokens)) fs.unlinkSync(tmpTokens); } catch {}
-      }
+      this.atomicWriteFileSync(this.tokenStatsFile, JSON.stringify(statsObj, null, 2));
     } catch (err) {
       console.warn("[antigravity-acp] failed to persist sessions/tokens synchronously:", err);
     }

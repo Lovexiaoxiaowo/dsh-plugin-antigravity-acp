@@ -18,6 +18,7 @@ const LOAD_TIER_ENDPOINTS = [
 ];
 export class AntigravityQuotaService {
     sessionManager;
+    customEndpoints;
     cachedModelsData = null;
     cachedTierData = null;
     cachedSummaryData = null;
@@ -27,8 +28,17 @@ export class AntigravityQuotaService {
     isCircuitOpen = false;
     pendingFetchPromise = null;
     CACHE_TTL_MS = 15_000; // 15s cache
-    constructor(sessionManager) {
+    constructor(sessionManager, customEndpoints) {
         this.sessionManager = sessionManager;
+        this.customEndpoints = customEndpoints;
+    }
+    recordFailure(durationMs = 30_000) {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= 3 || durationMs >= 60_000) {
+            this.circuitOpenUntil = Math.max(this.circuitOpenUntil, Date.now() + durationMs);
+            this.isCircuitOpen = true;
+            console.warn(`[antigravity-acp] quota endpoint circuit breaker open for ${Math.round(durationMs / 1000)}s`);
+        }
     }
     async postWithFallback(endpoints, token, body) {
         const controller = new AbortController();
@@ -50,6 +60,15 @@ export class AntigravityQuotaService {
                     });
                     if (res.ok) {
                         return await res.json();
+                    }
+                    if (res.status === 401) {
+                        console.warn("[antigravity-acp] unauthorized token expired (HTTP 401)");
+                    }
+                    else if (res.status === 429) {
+                        console.warn("[antigravity-acp] quota rate limit encountered (HTTP 429)");
+                        this.recordFailure(60_000);
+                        await res.body?.cancel().catch(() => { });
+                        return null;
                     }
                     await res.body?.cancel().catch(() => { });
                 }
@@ -82,19 +101,25 @@ export class AntigravityQuotaService {
             this.isCircuitOpen = true;
             return;
         }
-        const token = await getFreshAccessToken();
+        else {
+            this.isCircuitOpen = false;
+        }
+        const token = (await getFreshAccessToken()) || (this.customEndpoints ? "mock-token" : null);
         if (!token)
             return;
         try {
+            const endpoints = Array.isArray(this.customEndpoints)
+                ? { models: this.customEndpoints, tier: this.customEndpoints, summary: this.customEndpoints }
+                : this.customEndpoints;
             const [modelsData, tierData, summaryData] = await Promise.all([
-                this.postWithFallback(FETCH_MODELS_ENDPOINTS, token, {}),
-                this.postWithFallback(LOAD_TIER_ENDPOINTS, token, {
+                this.postWithFallback(endpoints?.models || FETCH_MODELS_ENDPOINTS, token, {}),
+                this.postWithFallback(endpoints?.tier || LOAD_TIER_ENDPOINTS, token, {
                     metadata: {
                         ideType: "ANTIGRAVITY",
                         pluginVersion: "1.0.0",
                     },
                 }),
-                this.postWithFallback(QUOTA_SUMMARY_ENDPOINTS, token, {}),
+                this.postWithFallback(endpoints?.summary || QUOTA_SUMMARY_ENDPOINTS, token, {}),
             ]);
             const anySuccess = Boolean(modelsData || tierData || summaryData);
             if (anySuccess) {
@@ -113,20 +138,11 @@ export class AntigravityQuotaService {
                 }
             }
             else {
-                this.consecutiveFailures++;
-                if (this.consecutiveFailures >= 3) {
-                    this.circuitOpenUntil = now + 30_000;
-                    this.isCircuitOpen = true;
-                    console.warn("[antigravity-acp] quota endpoint circuit breaker open for 30s");
-                }
+                this.recordFailure(30_000);
             }
         }
         catch (err) {
-            this.consecutiveFailures++;
-            if (this.consecutiveFailures >= 3) {
-                this.circuitOpenUntil = now + 30_000;
-                this.isCircuitOpen = true;
-            }
+            this.recordFailure(30_000);
             console.warn("[antigravity-acp] quota fetch error:", err);
         }
     }

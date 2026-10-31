@@ -187,4 +187,29 @@ describe("session-manager lifecycle and token suite (Sandboxed)", () => {
     expect(explicit.inputTokens).toBe(200);
     expect(explicit.totalTokens).toBe(900);
   });
+
+  it("Lane 27: flushSync persists session binding and token stats synchronously via atomicWriteFileSync", () => {
+    mgr.saveBinding({
+      dshSessionId: "flush-sync-test",
+      acpSessionId: "acp-sync-1",
+      lastActive: 987654321,
+      messageCount: 2,
+    });
+    mgr.recordUsage("flush-sync-test", { inputTokens: 100, outputTokens: 50 }, 0, 0);
+
+    // Call flushSync directly
+    mgr.flushSync();
+
+    const sessionsFile = path.join(sandboxDir, "sessions.json");
+    const tokensFile = path.join(sandboxDir, "token_stats.json");
+    expect(fs.existsSync(sessionsFile)).toBe(true);
+    expect(fs.existsSync(tokensFile)).toBe(true);
+
+    const sessions = JSON.parse(fs.readFileSync(sessionsFile, "utf-8"));
+    expect(sessions.some((b: any) => b.dshSessionId === "flush-sync-test" && b.acpSessionId === "acp-sync-1")).toBe(true);
+
+    const tokens = JSON.parse(fs.readFileSync(tokensFile, "utf-8"));
+    expect(tokens["flush-sync-test"]).toBeDefined();
+    expect(tokens["flush-sync-test"].totalTokens).toBe(150);
+  });
 });

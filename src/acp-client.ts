@@ -39,6 +39,7 @@ export class AntigravityAcpClient {
   private connection: ClientSideConnection | null = null;
   private currentSessionId: string | null = null;
 
+  private isPaused = false;
   constructor(
     private readonly serverBinaryPath: string,
     private readonly defaultArgs: string[] = [],
@@ -240,11 +241,55 @@ export class AntigravityAcpClient {
     if (!this.connection) return;
     await this.connection.cancel({ sessionId });
   }
+  /**
+   * Pauses incoming stdout stream from the ACP process to apply backpressure.
+   */
+  pauseStdout(): void {
+    if (this.childProcess?.stdout && typeof this.childProcess.stdout.pause === "function") {
+      this.childProcess.stdout.pause();
+    }
+    this.isPaused = true;
+  }
+
+  /**
+   * Resumes incoming stdout stream from the ACP process when backpressure drains.
+   */
+  resumeStdout(): void {
+    if (this.childProcess?.stdout && typeof this.childProcess.stdout.resume === "function") {
+      this.childProcess.stdout.resume();
+    }
+    this.isPaused = false;
+  }
+
+  /**
+   * Returns whether the client stdout stream is currently paused.
+   */
+  isStdoutPaused(): boolean {
+    if (this.childProcess?.stdout && typeof this.childProcess.stdout.isPaused === "function") {
+      return this.childProcess.stdout.isPaused();
+    }
+    return this.isPaused;
+  }
+
+  /**
+   * Attaches or overrides the child process (used for testing or wrapping).
+   */
+  attachProcess(proc: ChildProcess | any): void {
+    this.childProcess = proc;
+  }
+
+  /**
+   * Returns the underlying child process if spawned.
+   */
+  getChildProcess(): ChildProcess | null {
+    return this.childProcess;
+  }
 
   /**
    * Stops the client and kills the background process cleanly.
    */
   async stop(): Promise<void> {
+    this.resumeStdout();
     if (this.childProcess) {
       this.childProcess.kill();
       this.childProcess = null;
