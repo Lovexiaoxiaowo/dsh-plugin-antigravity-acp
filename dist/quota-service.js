@@ -131,6 +131,8 @@ export class AntigravityQuotaService {
             remainingPercent: `${(fraction * 100).toFixed(1)}%`,
             resetTime,
             resetCountdown: this.formatCountdown(resetTime),
+            weeklyRemainingFraction: 1.0,
+            weeklyRemainingPercent: "100.0%",
             weeklyResetTime: weeklyInfo.weeklyResetTime,
             weeklyResetCountdown: weeklyInfo.weeklyResetCountdown,
             weeklyResetLabel: weeklyInfo.weeklyResetLabel,

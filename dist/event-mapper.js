@@ -44,9 +44,36 @@ function isUuidLike(str) {
         return false;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(:\d+)?$/i.test(str.trim());
 }
-function parseToolMeta(toolCallId, rawTitle, rawName) {
+/**
+ * Tracks tool call steps per prompt turn.
+ * Ensures the first tool call is always [步骤 #1], the second [步骤 #2], etc.,
+ * normalizing Antigravity's internal step IDs (where tool calls begin at step 2 after initial thought).
+ */
+export class AcpStepTracker {
+    toolStepMap = new Map();
+    nextStep = 1;
+    getStepNumber(toolCallId) {
+        if (!toolCallId) {
+            return this.nextStep++;
+        }
+        let num = this.toolStepMap.get(toolCallId);
+        if (num === undefined) {
+            num = this.nextStep++;
+            this.toolStepMap.set(toolCallId, num);
+        }
+        return num;
+    }
+    reset() {
+        this.toolStepMap.clear();
+        this.nextStep = 1;
+    }
+}
+function parseToolMeta(toolCallId, rawTitle, rawName, stepTracker) {
     let stepNumber = "";
-    if (toolCallId && toolCallId.includes(":")) {
+    if (stepTracker && toolCallId) {
+        stepNumber = String(stepTracker.getStepNumber(toolCallId));
+    }
+    else if (toolCallId && toolCallId.includes(":")) {
         const parts = toolCallId.split(":");
         const last = parts[parts.length - 1];
         if (/^\d+$/.test(last)) {
@@ -87,7 +114,7 @@ function formatArguments(args) {
     }
     return String(args);
 }
-export function mapSessionUpdate(notification) {
+export function mapSessionUpdate(notification, stepTracker) {
     const update = notification?.update;
     if (!update)
         return [];
@@ -104,7 +131,7 @@ export function mapSessionUpdate(notification) {
         case "tool_call": {
             const toolId = String(update.toolCallId || `tool-${Date.now()}`);
             const toolName = clean(update.name || update.title || "antigravity-tool");
-            const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name);
+            const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name, stepTracker);
             const titlePart = displayTitle ? ` \`${displayTitle}\`` : "";
             const status = update.status && update.status !== "in_progress" ? ` · ${update.status}` : "";
             const argsStr = formatArguments(update.arguments);
@@ -123,7 +150,7 @@ export function mapSessionUpdate(notification) {
         case "tool_call_update": {
             const toolId = String(update.toolCallId || "");
             const toolName = clean(update.name || update.title || "antigravity-tool");
-            const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name);
+            const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name, stepTracker);
             const isCompleted = update.status === "completed";
             const isFailed = update.status === "failed" || update.status === "error";
             let tag = `⚡ **[${stepLabel}]**`;

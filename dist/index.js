@@ -4,7 +4,7 @@ import { hasLocalCredentials, clearLocalCredentials } from "./auth.js";
 import { AntigravityAcpClient } from "./acp-client.js";
 import { DshSessionManager } from "./session-manager.js";
 import { AntigravityQuotaService } from "./quota-service.js";
-import { mapSessionUpdate, DshStreamWriter } from "./event-mapper.js";
+import { mapSessionUpdate, DshStreamWriter, AcpStepTracker } from "./event-mapper.js";
 export * from "./types.js";
 export * from "./bootstrapper.js";
 export * from "./auth.js";
@@ -251,6 +251,7 @@ export class DshAntigravityService {
             promptText = this.sessionManager.formatPromptWithHistory(input, isNewSession);
         }
         const listenerKey = `stream-${Date.now()}-${Math.random()}`;
+        const stepTracker = new AcpStepTracker();
         const queue = [];
         let resolver = null;
         const pushItem = (item) => {
@@ -280,7 +281,7 @@ export class DshAntigravityService {
             if (notice?.sessionId && notice.sessionId !== acpSessionId) {
                 return;
             }
-            const activities = mapSessionUpdate(notice);
+            const activities = mapSessionUpdate(notice, stepTracker);
             for (const activity of activities) {
                 if (activity.type === "thought") {
                     writer.writeThinking(activity.delta);
@@ -347,6 +348,7 @@ export class DshAntigravityService {
                     try {
                         // 1. Purge stale session
                         this.sessionManager.removeBinding(dshSessionId);
+                        stepTracker.reset();
                         // 2. Initialize fresh session
                         const newRes = await this.createSession(cwd, { model, reasoningEffort });
                         currentAcpSessionId = newRes.sessionId;

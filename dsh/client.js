@@ -442,20 +442,9 @@ window.__ModuleLoader__.load({
 
         var isReady = snapshot && snapshot.quota
         var quota = isReady ? snapshot.quota : null
-        var contextUsage = (snapshot && snapshot.contextUsage) ? snapshot.contextUsage : {
-          percentage: '0.0%',
-          isWarning: false,
-          usedTokens: 0,
-          maxTokens: 1000000,
-        }
-        var sessionTokens = (snapshot && snapshot.sessionTokens) ? snapshot.sessionTokens : {
-          inputTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          totalTokens: 0,
-        }
+        var weeklyPercent = (quota && quota.weeklyRemainingPercent) ? quota.weeklyRemainingPercent : '100.0%'
+        var weeklyFraction = (quota && quota.weeklyRemainingFraction != null) ? quota.weeklyRemainingFraction : 1.0
 
-        var isWarn = contextUsage.isWarning
         var fraction = quota && quota.remainingFraction != null ? quota.remainingFraction : 1
         var quotaColor = !isReady
           ? 'var(--dsw-alias-text-secondary, #94a3b8)'
@@ -465,9 +454,14 @@ window.__ModuleLoader__.load({
           ? '#f59e0b'
           : '#10b981'
 
+        var isQuotaWarn = isReady && fraction < 0.2
+
         var pillLabel = isReady
           ? '5h ' + quota.remainingPercent
           : '额度同步中'
+        var weeklyLabel = isReady
+          ? '周 ' + (quota.weeklyRemainingPercent || '100%')
+          : '周同步中'
 
         var pill = h(
           'div',
@@ -476,7 +470,7 @@ window.__ModuleLoader__.load({
               if (!showPopover) fetchQuota()
               setShowPopover(!showPopover)
             },
-            title: '点击展开 Antigravity 额度与 Context 详情',
+            title: '点击展开 Google Antigravity 额度详情 (5H 滑动速率 & 7天周配额)',
             style: {
               display: 'inline-flex',
               alignItems: 'center',
@@ -489,17 +483,17 @@ window.__ModuleLoader__.load({
               cursor: 'pointer',
               userSelect: 'none',
               backgroundColor: 'var(--dsw-alias-bg-layer-2, rgba(255, 255, 255, 0.06))',
-              border: isWarn
+              border: isQuotaWarn
                 ? '1px solid #ef4444'
                 : '1px solid var(--dsw-alias-border, rgba(255, 255, 255, 0.12))',
-              color: isWarn ? '#ef4444' : 'var(--dsw-alias-text-primary, #e2e8f0)',
+              color: isQuotaWarn ? '#ef4444' : 'var(--dsw-alias-text-primary, #e2e8f0)',
               transition: 'all 0.15s ease',
             },
           },
           h('span', { style: { color: quotaColor, fontSize: '12px' } }, '⚡'),
           h('span', null, pillLabel),
           h('span', { style: { opacity: 0.35 } }, '|'),
-          h('span', null, '上下文 ' + contextUsage.percentage),
+          h('span', null, weeklyLabel),
           h(
             'svg',
             {
@@ -573,10 +567,10 @@ window.__ModuleLoader__.load({
                       color: '#60a5fa',
                     },
                   },
-                  (quota && quota.tier) ? quota.tier : 'Google Cloud Code'
+                  (quota && quota.tier) ? quota.tier : 'Google AI'
                 )
               ),
-              // 5h Quota section
+              // 5h Sliding Quota section
               h(
                 'div',
                 { style: { marginBottom: '12px' } },
@@ -611,9 +605,46 @@ window.__ModuleLoader__.load({
                   ? h(
                       'div',
                       { style: { fontSize: '10px', opacity: 0.6, textAlign: 'right' } },
-                      '下次重置: ' + quota.resetCountdown
+                      '下次平滑恢复: ' + quota.resetCountdown
                     )
                   : null
+              ),
+              // 7-day Weekly Limit section
+              h(
+                'div',
+                { style: { marginBottom: '12px' } },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
+                  h('span', { style: { opacity: 0.8 } }, '7天自然周配额'),
+                  h('span', { style: { fontWeight: '600', color: '#10b981' } }, weeklyPercent)
+                ),
+                h(
+                  'div',
+                  {
+                    style: {
+                      height: '6px',
+                      borderRadius: '3px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      overflow: 'hidden',
+                      marginBottom: '4px',
+                    },
+                  },
+                  h('div', {
+                    style: {
+                      height: '100%',
+                      width: weeklyPercent,
+                      backgroundColor: '#10b981',
+                      borderRadius: '3px',
+                      transition: 'width 0.3s ease',
+                    },
+                  })
+                ),
+                h(
+                  'div',
+                  { style: { fontSize: '10px', opacity: 0.6, textAlign: 'right' } },
+                  '周额度充足 · 每周一 08:00 (UTC+8) 重置'
+                )
               ),
               // Quota Rolling & Weekly Reset explanation card
               h(
@@ -648,107 +679,6 @@ window.__ModuleLoader__.load({
                     ' (还剩 ' +
                     ((quota && quota.weeklyResetCountdown) ? quota.weeklyResetCountdown : '计算中') +
                     ')'
-                )
-              ),
-              // Context window usage section
-              h(
-                'div',
-                { style: { marginBottom: '12px' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
-                  h('span', { style: { opacity: 0.8 } }, '1M 上下文占用 (Gemini 3.8)'),
-                  h(
-                    'span',
-                    { style: { fontWeight: '600', color: isWarn ? '#ef4444' : '#3b82f6' } },
-                    contextUsage.percentage
-                  )
-                ),
-                h(
-                  'div',
-                  {
-                    style: {
-                      height: '6px',
-                      borderRadius: '3px',
-                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                      overflow: 'hidden',
-                      marginBottom: '4px',
-                    },
-                  },
-                  h('div', {
-                    style: {
-                      height: '100%',
-                      width: contextUsage.percentage,
-                      backgroundColor: isWarn ? '#ef4444' : '#3b82f6',
-                      borderRadius: '3px',
-                    },
-                  })
-                ),
-                h(
-                  'div',
-                  {
-                    style: {
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '10px',
-                      opacity: 0.6,
-                    },
-                  },
-                  h(
-                    'span',
-                    null,
-                    contextUsage.usedTokens.toLocaleString() +
-                      ' / ' +
-                      contextUsage.maxTokens.toLocaleString() +
-                      ' tokens'
-                  ),
-                  h('span', null, isWarn ? '⚠️ 建议开启新会话' : '安全裕量充足')
-                )
-              ),
-              // Session Token stats section
-              h(
-                'div',
-                {
-                  style: {
-                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                    padding: '8px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--dsw-alias-border, rgba(255,255,255,0.06))',
-                    marginBottom: '10px',
-                  },
-                },
-                h(
-                  'div',
-                  { style: { fontSize: '11px', fontWeight: '500', marginBottom: '6px', opacity: 0.9 } },
-                  '本次会话 Token 记账'
-                ),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' } },
-                  h(
-                    'div',
-                    null,
-                    h('span', { style: { opacity: 0.6 } }, '输入: '),
-                    sessionTokens.inputTokens.toLocaleString()
-                  ),
-                  h(
-                    'div',
-                    null,
-                    h('span', { style: { opacity: 0.6 } }, '输出: '),
-                    sessionTokens.outputTokens.toLocaleString()
-                  ),
-                  h(
-                    'div',
-                    null,
-                    h('span', { style: { opacity: 0.6 } }, '思考: '),
-                    (sessionTokens.reasoningTokens || 0).toLocaleString()
-                  ),
-                  h(
-                    'div',
-                    null,
-                    h('span', { style: { opacity: 0.6 } }, '总计: '),
-                    sessionTokens.totalTokens.toLocaleString()
-                  )
                 )
               ),
               // Footer
@@ -829,19 +759,7 @@ window.__ModuleLoader__.load({
               )
             )
 
-            // 3. Register Quota & Context Pill into Chat Input Bar (Immediately left of model selector)
-            c.slots.inject('conversation.input.right', () =>
-              c.slots.register(
-                {
-                  name: 'conversation.input.right',
-                  id: 'antigravity-quota-pill',
-                  order: 10,
-                },
-                QuotaPill
-              )
-            )
-
-            // 4. Register Quota & Context Pill into Bottom Dock Bar (Always visible even during agent activity)
+            // 3. Register Quota Pill into Bottom Dock Bar (Always visible even during agent activity)
             c.slots.inject('conversation.composer.dock', () =>
               c.slots.register(
                 {

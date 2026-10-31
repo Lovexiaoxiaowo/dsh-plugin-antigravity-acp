@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.10-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.12-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,16 @@
 ---
 
 ## 版本更新日志 (Changelog)
+
+### v1.0.12 (2026-10-31)
+- **工具调用步骤序号归一化**：
+  - 引入 `AcpStepTracker`，将 Antigravity ACP 内部的轨迹步数（底层将首轮初始分析作为 Step 1，首个工具作为 Step 2）按用户交互轮次统一规整为从直观的 `[步骤 #1]` 开始自增计数；
+  - 保证工具执行与状态更新严格对齐 `[步骤 #N]` 与 `[步骤 #N 完成]`。
+- **Slot 精简（仅保留底栏 Dock）**：
+  - 移除输入框控制栏内部右侧重复的 slot 挂载，仅保留最下方状态底栏（`conversation.composer.dock`）的单胶囊展示，界面清爽统一。
+- **额度展示深度优化（对标 GitHub 社区主流项目）**：
+  - 彻底移除冗余的上下文百分比（`上下文 100%`）与 1M 上下文占用进度条、警报及 Token 记账卡片；
+  - 胶囊与 Popover 浮层全面聚焦双重配额：**5小时滑动速率窗口**（实时百分比、进度条、平滑恢复倒计时）与 **7天自然周配额**（周重置时间点与剩余倒计时看板）。
 
 ### v1.0.10 (2026-10-30)
 - **新增周额度结算时间与倒计时看板**：

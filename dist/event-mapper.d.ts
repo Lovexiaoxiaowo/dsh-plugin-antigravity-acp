@@ -1,6 +1,17 @@
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type { AcpActivity, TokenAccounting } from "./types.js";
-export declare function mapSessionUpdate(notification: SessionNotification): AcpActivity[];
+/**
+ * Tracks tool call steps per prompt turn.
+ * Ensures the first tool call is always [步骤 #1], the second [步骤 #2], etc.,
+ * normalizing Antigravity's internal step IDs (where tool calls begin at step 2 after initial thought).
+ */
+export declare class AcpStepTracker {
+    private toolStepMap;
+    private nextStep;
+    getStepNumber(toolCallId: string): number;
+    reset(): void;
+}
+export declare function mapSessionUpdate(notification: SessionNotification, stepTracker?: AcpStepTracker): AcpActivity[];
 /**
  * High-reliability event writer emitting valid DSH StreamChunk sequences.
  * Guarantees proper lifecycle:

@@ -74,6 +74,8 @@ export interface QuotaSummary {
     remainingPercent: string;
     resetTime?: string;
     resetCountdown?: string;
+    weeklyRemainingFraction?: number;
+    weeklyRemainingPercent?: string;
     weeklyResetTime?: string;
     weeklyResetCountdown?: string;
     weeklyResetLabel?: string;
