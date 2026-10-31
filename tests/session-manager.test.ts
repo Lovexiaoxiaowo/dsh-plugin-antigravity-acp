@@ -235,4 +235,42 @@ describe("session-manager lifecycle and token suite (Sandboxed)", () => {
     const hitRate = usage.cachedTokens / (usage.inputTokens + usage.cachedTokens);
     expect(hitRate).toBeGreaterThan(0.93); // ~93.4% genuine hit rate!
   });
+  it("Lane 29: self-heals historically contaminated session entries where inputTokens exceeded 100k due to account-level leak", () => {
+    // Write a contaminated token_stats.json file into temp dir
+    const contaminatedFile = path.join(sandboxDir, "token_stats.json");
+    const contaminatedStats = {
+      "polluted-session-1": {
+        inputTokens: 576128,
+        outputTokens: 4184,
+        reasoningTokens: 5344,
+        cachedTokens: 20656,
+        totalTokens: 600968,
+        currentContextTokens: 21493
+      }
+    };
+    fs.writeFileSync(contaminatedFile, JSON.stringify(contaminatedStats, null, 2), "utf-8");
+
+    // Re-initialize manager pointing to sandboxDir to trigger loadFromDisk self-healing
+    const healingMgr = new DshSessionManager(sandboxDir);
+    const healed = healingMgr.getUsage("polluted-session-1");
+
+    expect(healed.inputTokens).toBe(21493);
+    expect(healed.cachedTokens).toBe(20656);
+    expect(healed.totalTokens).toBe(21493 + 20656 + 4184);
+    healingMgr.dispose();
+  });
+
+  it("Lane 30: guards against account-wide quota meter pollution during recordUsage", () => {
+    // If an incoming turn has tiny prompt/output but historic inputTokens was huge
+    const usage = mgr.recordUsage("leak-guard-session", {
+      inputTokens: 576128,
+      cachedTokens: 20656,
+      outputTokens: 100,
+    }, 100, 200, 15000);
+
+    // Context tokens is 15000, inputTokens must not remain at 500k+
+    const current = mgr.getUsage("leak-guard-session");
+    expect(current.inputTokens).toBeLessThanOrEqual(50000);
+    expect(current.cachedTokens).toBe(20656);
+  });
 });

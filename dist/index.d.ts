@@ -70,6 +70,11 @@ export declare class DshAntigravityService {
     readonly sessionManager: DshSessionManager;
     readonly quotaService: AntigravityQuotaService;
     private attachmentStore;
+    /**
+     * Reads genuine, authoritative turn-level token counts directly from
+     * the Antigravity runtime transcript (.system_generated/logs/transcript.jsonl).
+     */
+    private extractLastStepTokensFromTranscript;
     getClient(): AntigravityAcpClient | null;
     setAttachmentStore(store: any): void;
     resolveAttachment(attachmentRef: any): Promise<{

@@ -47,6 +47,10 @@ export class DshSessionManager {
     this.registerExitHooks();
   }
 
+  getSessionsDir(): string {
+    return this.sessionsDir;
+  }
+
   dispose(): void {
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
@@ -98,6 +102,11 @@ export class DshSessionManager {
         const raw = fs.readFileSync(this.tokenStatsFile, "utf-8");
         const stats: Record<string, TokenAccounting> = JSON.parse(raw);
         for (const [key, val] of Object.entries(stats)) {
+          // Self-heal contaminated entries where account-wide meter leaked into inputTokens
+          if (val && val.inputTokens > 100_000 && (val.currentContextTokens || 0) < 50_000 && (val.cachedTokens || 0) < 50_000) {
+            val.inputTokens = Math.max(50, val.currentContextTokens || 1000);
+            val.totalTokens = val.inputTokens + (val.cachedTokens || 0) + (val.outputTokens || 0);
+          }
           this.tokenStats.set(key, val);
         }
       }
@@ -295,6 +304,12 @@ export class DshSessionManager {
     current.outputTokens += turnOut;
     current.reasoningTokens += turnReason;
     current.totalTokens += turnTotal;
+
+    // Guard against historical account-wide meter pollution
+    if (current.inputTokens > 100_000 && (current.currentContextTokens || 0) < 50_000 && (current.cachedTokens || 0) < 50_000) {
+      current.inputTokens = Math.max(50, current.currentContextTokens || 1000);
+      current.totalTokens = current.inputTokens + current.cachedTokens + current.outputTokens;
+    }
 
     // Active context window represents the FULL active session payload, not just this turn single-step delta!
     const contextEstimate = typeof totalContextTokens === "number" && totalContextTokens > 0

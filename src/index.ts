@@ -83,6 +83,7 @@ export const KNOWN_ANTIGRAVITY_MODELS: AntigravityModelMeta[] = [
   },
 ];
 
+import fs from "node:fs";
 import path from "node:path";
 import { ensureAntigravityServer } from "./bootstrapper.js";
 import { hasLocalCredentials, clearLocalCredentials, getFreshAccessToken } from "./auth.js";
@@ -217,6 +218,54 @@ export class DshAntigravityService {
   public readonly sessionManager = new DshSessionManager();
   public readonly quotaService = new AntigravityQuotaService(this.sessionManager);
   private attachmentStore: any = null;
+
+  /**
+   * Reads genuine, authoritative turn-level token counts directly from
+   * the Antigravity runtime transcript (.system_generated/logs/transcript.jsonl).
+   */
+  private extractLastStepTokensFromTranscript(acpSessionId: string): Partial<TokenAccounting> | null {
+    try {
+      const transcriptPath = path.join(
+        this.sessionManager.getSessionsDir(),
+        "brain",
+        acpSessionId,
+        ".system_generated",
+        "logs",
+        "transcript.jsonl"
+      );
+      if (!fs.existsSync(transcriptPath)) return null;
+
+      const stat = fs.statSync(transcriptPath);
+      const readSize = Math.min(stat.size, 64 * 1024);
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(transcriptPath, "r");
+      try {
+        fs.readSync(fd, buffer, 0, readSize, stat.size - readSize);
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      const lines = buffer.toString("utf-8").split(/\r?\n/).filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const entry = JSON.parse(lines[i]);
+          if (entry.type === "PLANNER_RESPONSE" && typeof entry.input_tokens === "number") {
+            return {
+              inputTokens: Number(entry.input_tokens || 0),
+              cachedTokens: Number(entry.cache_read_tokens || entry.cached_tokens || 0),
+              outputTokens: Number(entry.output_tokens || 0),
+              reasoningTokens: Number(entry.thought_tokens || entry.reasoningTokens || 0),
+            };
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      // Graceful fallback
+    }
+    return null;
+  }
 
   public getClient(): AntigravityAcpClient | null {
     return this.client;
@@ -604,12 +653,12 @@ export class DshAntigravityService {
       this.sessionManager.incrementMessageCount(dshSessionId);
 
       const turnUsage = response?.usage || response?.usageMetadata || response?._meta?.usage;
-      const quota = response?._meta?.quota;
+      // Extract genuine turn-level tokens from response.usage, NEVER letting account-wide quota override it
       const responseTokens = (turnUsage && (turnUsage.inputTokens || turnUsage.input_tokens || turnUsage.promptTokenCount))
         ? turnUsage
-        : (quota?.token_count && Number(quota.token_count.input_tokens) <= 1_000_000 ? quota.token_count : null);
+        : null;
 
-      const effectiveUsage: Partial<TokenAccounting> = latestStreamUsage
+      let effectiveUsage: Partial<TokenAccounting> = latestStreamUsage
         ? {
             inputTokens: latestStreamUsage.inputTokens,
             cachedTokens: latestStreamUsage.cachedTokens,
@@ -630,6 +679,20 @@ export class DshAntigravityService {
               0
             ),
           } : {});
+
+      // Authoritative ground-truth sync:
+      // If ACP stream/response did not supply explicit cachedTokens, query authentic transcript.jsonl written by Antigravity runtime
+      if ((!effectiveUsage.cachedTokens || effectiveUsage.cachedTokens === 0) && acpSessionId) {
+        const transcriptTokens = this.extractLastStepTokensFromTranscript(acpSessionId);
+        if (transcriptTokens && (transcriptTokens.cachedTokens || transcriptTokens.inputTokens)) {
+          effectiveUsage = {
+            inputTokens: transcriptTokens.inputTokens ?? effectiveUsage.inputTokens,
+            cachedTokens: transcriptTokens.cachedTokens ?? effectiveUsage.cachedTokens,
+            outputTokens: Math.max(accumulatedOutputTokens, Number(effectiveUsage.outputTokens || transcriptTokens.outputTokens || 0)),
+            reasoningTokens: Math.max(accumulatedReasoningTokens, Number(effectiveUsage.reasoningTokens || transcriptTokens.reasoningTokens || 0)),
+          };
+        }
+      }
 
       const promptChars = typeof promptPayload === "string" ? promptPayload.length : JSON.stringify(promptPayload).length;
       const outputChars = writer.getRecordedTextLength();

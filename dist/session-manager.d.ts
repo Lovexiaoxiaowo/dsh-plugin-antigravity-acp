@@ -11,6 +11,7 @@ export declare class DshSessionManager {
     private readonly sessionsFile;
     private readonly tokenStatsFile;
     constructor(sessionsDir?: string);
+    getSessionsDir(): string;
     dispose(): void;
     private registerExitHooks;
     private loadFromDisk;
