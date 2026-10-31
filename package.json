@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-antigravity-acp",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "DeepSeek Harness (DSH) plugin connecting Google Antigravity ACP runtime for Gemini 3.x coding agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

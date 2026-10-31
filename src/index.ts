@@ -422,9 +422,9 @@ export class DshAntigravityService {
       this.sessionManager.incrementMessageCount(dshSessionId);
 
       // Extract genuine turn-level tokens from response.usage, never letting account-wide quota override it
-      const turnUsage = response?.usage;
+      const turnUsage = response?.usage || response?.usageMetadata || response?._meta?.usage;
       const quota = response?._meta?.quota;
-      const rawTokens = (turnUsage && (turnUsage.inputTokens || turnUsage.input_tokens))
+      const rawTokens = (turnUsage && (turnUsage.inputTokens || turnUsage.input_tokens || turnUsage.promptTokenCount))
         ? turnUsage
         : (quota?.token_count && Number(quota.token_count.input_tokens) <= 1_000_000 ? quota.token_count : null);
 
@@ -434,10 +434,17 @@ export class DshAntigravityService {
       const finalUsage = this.sessionManager.recordUsage(
         dshSessionId,
         rawTokens ? {
-          inputTokens: Number(rawTokens.input_tokens || rawTokens.inputTokens || 0),
-          outputTokens: Number(rawTokens.output_tokens || rawTokens.outputTokens || 0),
-          reasoningTokens: Number(rawTokens.thought_tokens || rawTokens.thoughtTokens || 0),
-          cachedTokens: Number(rawTokens.cached_tokens || rawTokens.cachedReadTokens || 0),
+          inputTokens: Number(rawTokens.input_tokens || rawTokens.inputTokens || rawTokens.promptTokenCount || 0),
+          outputTokens: Number(rawTokens.output_tokens || rawTokens.outputTokens || rawTokens.candidatesTokenCount || 0),
+          reasoningTokens: Number(rawTokens.thought_tokens || rawTokens.thoughtTokens || rawTokens.reasoningTokens || 0),
+          cachedTokens: Number(
+            rawTokens.cached_tokens ||
+            rawTokens.cachedContentTokenCount ||
+            rawTokens.cached_content_token_count ||
+            rawTokens.cacheReadTokens ||
+            rawTokens.cache_read_input_tokens ||
+            0
+          ),
         } : {},
         promptChars,
         outputChars

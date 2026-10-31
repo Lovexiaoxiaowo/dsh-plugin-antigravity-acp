@@ -57,10 +57,11 @@ describe("event-mapper protocol suite", () => {
     expect((activities[0] as any).isStart).toBe(true);
   });
 
-  it("Lane 6: mapSessionUpdate handles tool_call_update completed and failed states", () => {
+  it("Lane 6: mapSessionUpdate handles tool_call_update failed state and suppresses completion clutter", () => {
     const tracker = new AcpStepTracker();
     tracker.getStepNumber("call-xyz"); // step 1
-    // Completed state
+
+    // Completed state suppresses noisy duplicate banners in DSH
     const completedNotice: any = {
       sessionId: "sess-1",
       update: {
@@ -72,9 +73,9 @@ describe("event-mapper protocol suite", () => {
       },
     };
     const completedActivities = mapSessionUpdate(completedNotice, tracker);
-    expect(completedActivities[0].text).toContain("✅ **[步骤 #1 完成]**");
+    expect(completedActivities.length).toBe(0);
 
-    // Failed state
+    // Failed state surfaces alert
     const failedNotice: any = {
       sessionId: "sess-1",
       update: {
@@ -85,7 +86,8 @@ describe("event-mapper protocol suite", () => {
       },
     };
     const failedActivities = mapSessionUpdate(failedNotice, tracker);
-    expect(failedActivities[0].text).toContain("❌ **[步骤 #1 失败]**");
+    expect(failedActivities.length).toBe(1);
+    expect(failedActivities[0].text).toContain("❌ [步骤 #1 失败]");
   });
 
   it("Lane 7: mapSessionUpdate handles subagent delegation with Subagents array", () => {
@@ -175,5 +177,20 @@ describe("event-mapper protocol suite", () => {
     expect(chunks[0].blockType).toBe("tool_call");
     expect(chunks[1].type).toBe("tool-call-delta");
     expect(chunks[2].type).toBe("block-end");
+  });
+  it("Lane 13: DshStreamWriter never leaks thinking or tool traces into text-delta after text started", () => {
+    const chunks: any[] = [];
+    const writer = new DshStreamWriter((c) => chunks.push(c));
+    writer.writeThinking("Initial thought");
+    writer.writeText("Final message paragraph 1");
+    // Trailing thought or tool trace
+    writer.writeThinking("Late tool execution");
+    writer.writeText(" Final message paragraph 2");
+    writer.finish("stop");
+
+    const textDeltas = chunks.filter((c) => c.type === "text-delta").map((c) => c.text);
+    const combinedText = textDeltas.join("");
+    expect(combinedText).toBe("Final message paragraph 1 Final message paragraph 2");
+    expect(combinedText).not.toContain("Late tool execution");
   });
 });

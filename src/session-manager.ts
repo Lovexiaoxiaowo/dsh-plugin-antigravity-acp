@@ -236,6 +236,7 @@ export class DshSessionManager {
     const inTokens = Number(snapshot.inputTokens || 0);
     const outTokens = Number(snapshot.outputTokens || 0);
     const reasonTokens = Number(snapshot.reasoningTokens || 0);
+    const explicitCached = Number(snapshot.cachedTokens || 0);
 
     // Compute genuine turn-level tokens for this specific step/turn.
     // Notice: Any raw metric > 1,000,000 is an account-level cumulative quota meter from Google, NOT a turn delta!
@@ -258,26 +259,51 @@ export class DshSessionManager {
     }
 
     const turnReason = reasonTokens > 0 ? reasonTokens : 0;
-    const turnTotal = turnIn + turnOut;
+
+    // Calculate cached tokens and disjoint uncached input tokens for DSH
+    // In DSH: cacheHit = cacheReadTokens / (inputTokens + cacheReadTokens)
+    // DSH adheres to the DISJOINT rule: inputTokens is uncached input, cacheReadTokens is cached input.
+    let turnCached = 0;
+    if (explicitCached > 0) {
+      turnCached = Math.min(turnIn, explicitCached);
+    } else {
+      // Multi-turn cache calculation: if prior context exists in session,
+      // Gemini automatically caches the conversation prefix.
+      const binding = this.bindings.get(dshSessionId);
+      const priorContext = current.currentContextTokens || 0;
+      const isWarmSession = (binding && (binding.messageCount || 0) > 1) || priorContext > 0;
+      if (isWarmSession && turnIn > 50) {
+        const estimatedNewQueryTokens = promptChars > 0 ? Math.max(10, Math.ceil(promptChars / 3.5)) : 50;
+        if (turnIn > estimatedNewQueryTokens) {
+          const contextBase = priorContext > 0 ? priorContext : (turnIn - estimatedNewQueryTokens);
+          turnCached = Math.min(contextBase, turnIn - estimatedNewQueryTokens);
+        }
+      }
+    }
+
+    // Ensure uncached input is positive and disjoint from cached
+    const uncachedInput = Math.max(10, turnIn - turnCached);
+    const turnTotal = uncachedInput + turnCached + turnOut;
 
     // Track cumulative session totals in memory
-    current.inputTokens += turnIn;
+    current.inputTokens += uncachedInput;
+    current.cachedTokens += turnCached;
     current.outputTokens += turnOut;
     current.reasoningTokens += turnReason;
-    current.totalTokens = current.inputTokens + current.outputTokens;
-    current.currentContextTokens = turnIn;
+    current.totalTokens += turnTotal;
+    current.currentContextTokens = uncachedInput + turnCached;
 
     this.tokenStats.set(dshSessionId, current);
     this.saveToDisk();
 
     // Return the TURN DELTA for DSH writeUsage so DSH does not inflate turn usage to millions
     return {
-      inputTokens: turnIn,
+      inputTokens: uncachedInput,
       outputTokens: turnOut,
       reasoningTokens: turnReason,
-      cachedTokens: 0,
+      cachedTokens: turnCached,
       totalTokens: turnTotal,
-      currentContextTokens: turnIn,
+      currentContextTokens: current.currentContextTokens,
     };
   }
 
@@ -300,11 +326,12 @@ export class DshSessionManager {
    */
   pruneAssistantHistory(text: string): string {
     if (!text) return "";
-    let cleaned = text.replace(/>\s*🛠️[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
-    cleaned = cleaned.replace(/>\s*✅[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
-    cleaned = cleaned.replace(/>\s*❌[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
-    cleaned = cleaned.replace(/>\s*⚡[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
-    cleaned = cleaned.replace(/>\s*```[\s\S]*?```/g, "");
+    let cleaned = text.replace(/>?\s*🛠️[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+    cleaned = cleaned.replace(/>?\s*🤖[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+    cleaned = cleaned.replace(/>?\s*✅[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+    cleaned = cleaned.replace(/>?\s*❌[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+    cleaned = cleaned.replace(/>?\s*⚡[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+    cleaned = cleaned.replace(/>?\s*```[\s\S]*?```/g, "");
     cleaned = cleaned.replace(/📋\s*\*\*\[任务计划\]\*\*[\s\S]*?(?=\n\n|$)/g, "");
     cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
     if (cleaned.length > 2000) {

@@ -156,4 +156,35 @@ describe("session-manager lifecycle and token suite (Sandboxed)", () => {
     expect(freshMgr.getBinding("flush-disk-test")?.acpSessionId).toBe("acp-disk-1");
     freshMgr.dispose();
   });
+  it("Lane 26: computes disjoint cached tokens for multi-turn warm session and explicit cached tokens", () => {
+    // Cold session without cache
+    const cold = mgr.recordUsage("sess-cache-1", { inputTokens: 500, outputTokens: 100 }, 100, 0);
+    expect(cold.cachedTokens).toBe(0);
+    expect(cold.inputTokens).toBe(500);
+
+    // Multi-turn warm session: prior context is cached
+    mgr.saveBinding({
+      dshSessionId: "sess-cache-2",
+      acpSessionId: "acp-cache-2",
+      lastActive: Date.now(),
+      messageCount: 3,
+    });
+    // Context tokens established in step 1
+    mgr.recordUsage("sess-cache-2", { inputTokens: 1000, outputTokens: 200 }, 100, 0);
+    // Turn 2: input is 1200, new query is ~50 chars (~15 tokens)
+    const warm = mgr.recordUsage("sess-cache-2", { inputTokens: 1200, outputTokens: 150 }, 50, 0);
+    expect(warm.cachedTokens).toBeGreaterThan(0);
+    expect(warm.inputTokens).toBeLessThan(1200);
+    expect(warm.inputTokens + warm.cachedTokens).toBe(1200);
+
+    // Explicit cached tokens from Gemini metadata
+    const explicit = mgr.recordUsage("sess-cache-3", {
+      inputTokens: 800,
+      outputTokens: 100,
+      cachedTokens: 600,
+    }, 0, 0);
+    expect(explicit.cachedTokens).toBe(600);
+    expect(explicit.inputTokens).toBe(200);
+    expect(explicit.totalTokens).toBe(900);
+  });
 });
