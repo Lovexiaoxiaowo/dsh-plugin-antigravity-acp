@@ -1,3 +1,12 @@
+export interface AntigravityModelMeta {
+    id: string;
+    name: string;
+    description: string;
+    contextWindow: number;
+    defaultMaxTokens?: number;
+    supportsThinking?: boolean;
+}
+export declare const KNOWN_ANTIGRAVITY_MODELS: AntigravityModelMeta[];
 import { AntigravityAcpClient } from "./acp-client.js";
 import { DshSessionManager } from "./session-manager.js";
 import { AntigravityQuotaService } from "./quota-service.js";

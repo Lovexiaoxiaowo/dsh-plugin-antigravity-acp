@@ -1,3 +1,77 @@
+export const KNOWN_ANTIGRAVITY_MODELS = [
+    {
+        id: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
+        description: "Google 旗舰速度与高推理代理模型 (1M 上下文)",
+        contextWindow: 1_048_576,
+        defaultMaxTokens: 65_536,
+        supportsThinking: true,
+    },
+    {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        description: "Google 深度逻辑与高难度编程推理模型 (1M 上下文)",
+        contextWindow: 1_048_576,
+        defaultMaxTokens: 65_536,
+        supportsThinking: true,
+    },
+    {
+        id: "gemini-2.5-flash",
+        name: "Gemini 2.5 Flash",
+        description: "Google 均衡快速主力模型 (1M 上下文)",
+        contextWindow: 1_048_576,
+        defaultMaxTokens: 65_536,
+        supportsThinking: false,
+    },
+    {
+        id: "gemini-2.5-flash-thinking",
+        name: "Gemini 2.5 Flash Thinking",
+        description: "具备完整可见思维链推理的 Flash 模型",
+        contextWindow: 1_048_576,
+        defaultMaxTokens: 65_536,
+        supportsThinking: true,
+    },
+    {
+        id: "gemini-3.5-flash-lite",
+        name: "Gemini 3.5 Flash Lite",
+        description: "超低延迟超高吞吐轻量模型",
+        contextWindow: 1_048_576,
+        defaultMaxTokens: 65_536,
+        supportsThinking: true,
+    },
+    {
+        id: "gemini-3.1-flash-image",
+        name: "Gemini 3.1 Flash Image",
+        description: "图像与多模态视觉生成处理模型",
+        contextWindow: 1_048_576,
+        defaultMaxTokens: 65_536,
+        supportsThinking: false,
+    },
+    {
+        id: "claude-opus-4-6-thinking",
+        name: "Claude Opus 4.6 Thinking",
+        description: "Google 托管 Claude Opus 深度思考与架构模型",
+        contextWindow: 200_000,
+        defaultMaxTokens: 32_768,
+        supportsThinking: true,
+    },
+    {
+        id: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        description: "Google 托管 Claude Sonnet 高阶编程模型",
+        contextWindow: 200_000,
+        defaultMaxTokens: 32_768,
+        supportsThinking: false,
+    },
+    {
+        id: "gpt-oss-120b-medium",
+        name: "GPT-OSS 120B",
+        description: "Google 托管开源百亿参数旗舰模型",
+        contextWindow: 128_000,
+        defaultMaxTokens: 16_384,
+        supportsThinking: false,
+    },
+];
 import path from "node:path";
 import { ensureAntigravityServer } from "./bootstrapper.js";
 import { hasLocalCredentials, clearLocalCredentials } from "./auth.js";
@@ -714,35 +788,64 @@ export function apply(ctx, config = {}) {
                             return undefined;
                         },
                         async listModels(provider) {
-                            return [
-                                {
-                                    id: "gemini-3.8-flash",
-                                    name: "Gemini 3.8 Flash (Antigravity)",
-                                    description: "Google Gemini 3.8 Flash Agent model",
+                            const dynamicModels = [];
+                            const upstreamModels = service.quotaService?.cachedModelsData;
+                            const seenIds = new Set();
+                            for (const m of KNOWN_ANTIGRAVITY_MODELS) {
+                                seenIds.add(m.id);
+                                dynamicModels.push({
+                                    id: m.id,
+                                    name: `${m.name} (Antigravity)`,
+                                    description: m.description,
                                     provider,
                                     inputModalities: ["text", "image"],
-                                },
-                            ];
+                                });
+                            }
+                            if (upstreamModels && typeof upstreamModels === "object") {
+                                for (const [key, val] of Object.entries(upstreamModels)) {
+                                    const normId = key.toLowerCase();
+                                    if (!seenIds.has(normId) && !normId.startsWith("tab_") && !normId.startsWith("chat_")) {
+                                        seenIds.add(normId);
+                                        dynamicModels.push({
+                                            id: normId,
+                                            name: `${val?.displayName || normId} (Antigravity)`,
+                                            description: "Google Antigravity upstream model",
+                                            provider,
+                                            inputModalities: ["text", "image"],
+                                        });
+                                    }
+                                }
+                            }
+                            return dynamicModels;
                         },
                         resolveModel(provider, model) {
+                            const targetId = model || "gemini-3.8-flash";
+                            const meta = KNOWN_ANTIGRAVITY_MODELS.find(m => m.id.toLowerCase() === targetId.toLowerCase()) || {
+                                id: targetId,
+                                name: targetId,
+                                description: "Google Antigravity model",
+                                contextWindow: 1_048_576,
+                                defaultMaxTokens: 65_536,
+                                supportsThinking: true,
+                            };
                             return Promise.resolve({
-                                id: model || "gemini-3.8-flash",
-                                name: "Gemini 3.8 Flash (Antigravity)",
-                                description: "Google Gemini 3.8 Flash Agent model",
+                                id: targetId,
+                                name: `${meta.name} (Antigravity)`,
+                                description: meta.description,
                                 provider,
                                 inputModalities: ["text", "image"],
                                 context: {
-                                    contextWindow: 1_000_000,
+                                    contextWindow: meta.contextWindow,
                                 },
-                                defaultMaxTokens: 65_536,
-                                reasoning: {
+                                defaultMaxTokens: meta.defaultMaxTokens || 65_536,
+                                reasoning: meta.supportsThinking ? {
                                     efforts: [
                                         { id: "low", name: "Low" },
                                         { id: "medium", name: "Medium" },
                                         { id: "high", name: "High" },
                                     ],
                                     defaultEffort: "high",
-                                },
+                                } : undefined,
                             });
                         },
                         async prepareCall(provider, model, signal) {
