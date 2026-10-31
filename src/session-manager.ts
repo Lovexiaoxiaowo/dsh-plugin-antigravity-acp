@@ -14,21 +14,27 @@ export class DshSessionManager {
   private isWriting = false;
   private pendingWrite = false;
 
+  private static exitHooksRegistered = false;
+  private static activeInstances = new Set<DshSessionManager>();
+
   constructor() {
     this.loadFromDisk();
     this.registerExitHooks();
   }
 
   private registerExitHooks(): void {
-    process.once("exit", () => {
-      this.flushSync();
-    });
-    process.once("SIGINT", () => {
-      this.flushSync();
-    });
-    process.once("SIGTERM", () => {
-      this.flushSync();
-    });
+    DshSessionManager.activeInstances.add(this);
+    if (!DshSessionManager.exitHooksRegistered) {
+      DshSessionManager.exitHooksRegistered = true;
+      const flushAll = () => {
+        for (const inst of DshSessionManager.activeInstances) {
+          inst.flushSync();
+        }
+      };
+      process.once("exit", flushAll);
+      process.once("SIGINT", flushAll);
+      process.once("SIGTERM", flushAll);
+    }
   }
 
   private loadFromDisk(): void {
