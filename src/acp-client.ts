@@ -33,6 +33,18 @@ export function openUrlInBrowser(url: string): void {
 }
 
 export class AntigravityAcpClient {
+  pauseStdout(): void {
+    if (this.childProcess?.stdout && !this.childProcess.stdout.isPaused()) {
+      this.childProcess.stdout.pause();
+    }
+  }
+
+  resumeStdout(): void {
+    if (this.childProcess?.stdout && this.childProcess.stdout.isPaused()) {
+      this.childProcess.stdout.resume();
+    }
+  }
+
   private childProcess: ChildProcess | null = null;
   private connection: ClientSideConnection | null = null;
   private currentSessionId: string | null = null;

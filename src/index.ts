@@ -318,6 +318,9 @@ export class DshAntigravityService {
     type QueueItem = { chunk?: any; error?: any; done?: boolean };
     const queue: QueueItem[] = [];
     let resolver: ((item: QueueItem) => void) | null = null;
+    const HIGH_WATERMARK = 500;
+    const LOW_WATERMARK = 200;
+    let isPaused = false;
 
     const pushItem = (item: QueueItem) => {
       if (resolver) {
@@ -326,12 +329,21 @@ export class DshAntigravityService {
         r(item);
       } else {
         queue.push(item);
+        if (!isPaused && queue.length >= HIGH_WATERMARK) {
+          isPaused = true;
+          this.client?.pauseStdout();
+        }
       }
     };
 
     const nextItem = (): Promise<QueueItem> => {
       if (queue.length > 0) {
-        return Promise.resolve(queue.shift()!);
+        const item = queue.shift()!;
+        if (isPaused && queue.length <= LOW_WATERMARK) {
+          isPaused = false;
+          this.client?.resumeStdout();
+        }
+        return Promise.resolve(item);
       }
       return new Promise((resolve) => {
         resolver = resolve;
@@ -512,8 +524,13 @@ export class DshAntigravityService {
         }
       }
     } finally {
+      if (isPaused) {
+        isPaused = false;
+        this.client?.resumeStdout();
+      }
       this.notificationListeners.delete(listenerKey);
       options?.signal?.removeEventListener("abort", abortHandler);
+      queue.length = 0;
     }
   }
 
