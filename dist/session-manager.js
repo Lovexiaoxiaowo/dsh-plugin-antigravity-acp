@@ -205,7 +205,7 @@ export class DshSessionManager {
         this.bindings.delete(dshSessionId);
         this.saveToDisk();
     }
-    recordUsage(dshSessionId, snapshot, promptChars = 0, outputChars = 0) {
+    recordUsage(dshSessionId, snapshot, promptChars = 0, outputChars = 0, totalContextTokens) {
         const current = this.tokenStats.get(dshSessionId) || {
             inputTokens: 0,
             outputTokens: 0,
@@ -219,7 +219,6 @@ export class DshSessionManager {
         const reasonTokens = Number(snapshot.reasoningTokens || 0);
         const explicitCached = Number(snapshot.cachedTokens || 0);
         // Compute genuine turn-level tokens for this specific step/turn.
-        // Notice: Any raw metric > 1,000,000 is an account-level cumulative quota meter from Google, NOT a turn delta!
         let turnIn = 0;
         if (inTokens > 0 && inTokens <= 1_000_000) {
             turnIn = inTokens;
@@ -241,16 +240,13 @@ export class DshSessionManager {
             turnOut = 20;
         }
         const turnReason = reasonTokens > 0 ? reasonTokens : 0;
-        // Calculate cached tokens and disjoint uncached input tokens for DSH
-        // In DSH: cacheHit = cacheReadTokens / (inputTokens + cacheReadTokens)
-        // DSH adheres to the DISJOINT rule: inputTokens is uncached input, cacheReadTokens is cached input.
+        // Respect authentic cached tokens directly from upstream ACP if provided
         let turnCached = 0;
         if (explicitCached > 0) {
             turnCached = Math.min(turnIn, explicitCached);
         }
         else {
-            // Multi-turn cache calculation: if prior context exists in session,
-            // Gemini automatically caches the conversation prefix.
+            // In warm multi-turn sessions, Gemini automatically caches the conversation prefix.
             const binding = this.bindings.get(dshSessionId);
             const priorContext = current.currentContextTokens || 0;
             const isWarmSession = (binding && (binding.messageCount || 0) > 1) || priorContext > 0;
@@ -263,7 +259,7 @@ export class DshSessionManager {
             }
         }
         // Ensure uncached input is positive and disjoint from cached
-        const uncachedInput = Math.max(10, turnIn - turnCached);
+        const uncachedInput = Math.max(1, turnIn - turnCached);
         const turnTotal = uncachedInput + turnCached + turnOut;
         // Track cumulative session totals in memory
         current.inputTokens += uncachedInput;
@@ -271,10 +267,14 @@ export class DshSessionManager {
         current.outputTokens += turnOut;
         current.reasoningTokens += turnReason;
         current.totalTokens += turnTotal;
-        current.currentContextTokens = uncachedInput + turnCached;
+        // Active context window represents the FULL active session payload, not just this turn single-step delta!
+        const contextEstimate = typeof totalContextTokens === "number" && totalContextTokens > 0
+            ? totalContextTokens
+            : Math.max(current.currentContextTokens || 0, turnIn);
+        current.currentContextTokens = contextEstimate;
         this.tokenStats.set(dshSessionId, current);
         this.saveToDisk();
-        // Return the TURN DELTA for DSH writeUsage so DSH does not inflate turn usage to millions
+        // Return the TURN DELTA for DSH writeUsage
         return {
             inputTokens: uncachedInput,
             outputTokens: turnOut,

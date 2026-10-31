@@ -1,5 +1,6 @@
 import { DshSessionManager } from "./session-manager.js";
 import type { SessionQuotaSnapshot } from "./types.js";
+export declare function formatFractionPercent(fraction: number): string;
 export declare class AntigravityQuotaService {
     private readonly sessionManager;
     private readonly customEndpoints?;

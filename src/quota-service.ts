@@ -23,6 +23,17 @@ const LOAD_TIER_ENDPOINTS = [
   "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
 ];
 
+export function formatFractionPercent(fraction: number): string {
+  if (fraction >= 1) return "100.0%";
+  if (fraction <= 0) return "0.0%";
+  const p = fraction * 100;
+  // If slightly consumed, do not round up to 100.0% to avoid illusion of non-responsive quota
+  if (p > 99.0 && p < 100.0) {
+    return `${Math.min(99.9, Math.floor(p * 10) / 10).toFixed(1)}%`;
+  }
+  return `${p.toFixed(1)}%`;
+}
+
 export class AntigravityQuotaService {
   private cachedModelsData: any = null;
   private cachedTierData: any = null;
@@ -313,7 +324,7 @@ export class AntigravityQuotaService {
     const is5hCooling = gemini5hFraction <= 0.001 && geminiWeeklyFraction > 0.001;
     const isWeeklyConstrained = isWeeklyExhausted || geminiWeeklyFraction < gemini5hFraction;
     const effectiveFraction = isWeeklyExhausted ? 0 : Math.min(gemini5hFraction, geminiWeeklyFraction);
-    const effectivePercent = `${(effectiveFraction * 100).toFixed(1)}%`;
+    const effectivePercent = formatFractionPercent(effectiveFraction);
 
     const maxContextTokens = Number(modelEntry?.maxTokens || DEFAULT_MAX_TOKENS);
 
@@ -333,13 +344,13 @@ export class AntigravityQuotaService {
         ],
         fiveHour: {
           remainingFraction: gemini5hFraction,
-          remainingPercent: `${(gemini5hFraction * 100).toFixed(1)}%`,
+          remainingPercent: formatFractionPercent(gemini5hFraction),
           resetTime: gemini5hReset,
           resetCountdown: this.formatCountdown(gemini5hReset),
         },
         weekly: {
           remainingFraction: geminiWeeklyFraction,
-          remainingPercent: `${(geminiWeeklyFraction * 100).toFixed(1)}%`,
+          remainingPercent: formatFractionPercent(geminiWeeklyFraction),
           resetTime: geminiWeeklyReset,
           resetCountdown: this.formatWeeklyCountdown(geminiWeeklyReset),
           description: geminiWeeklyDesc,
@@ -361,13 +372,13 @@ export class AntigravityQuotaService {
         ],
         fiveHour: {
           remainingFraction: tp5hFraction,
-          remainingPercent: `${(tp5hFraction * 100).toFixed(1)}%`,
+          remainingPercent: formatFractionPercent(tp5hFraction),
           resetTime: tp5hReset,
           resetCountdown: this.formatCountdown(tp5hReset),
         },
         weekly: {
           remainingFraction: tpWeeklyFraction,
-          remainingPercent: `${(tpWeeklyFraction * 100).toFixed(1)}%`,
+          remainingPercent: formatFractionPercent(tpWeeklyFraction),
           resetTime: tpWeeklyReset,
           resetCountdown: this.formatWeeklyCountdown(tpWeeklyReset),
           description: tpWeeklyDesc,
@@ -384,11 +395,11 @@ export class AntigravityQuotaService {
       model: modelId,
       displayName: modelEntry?.displayName || "Gemini 3.8 Flash (Antigravity)",
       remainingFraction: gemini5hFraction,
-      remainingPercent: `${(gemini5hFraction * 100).toFixed(1)}%`,
+      remainingPercent: formatFractionPercent(gemini5hFraction),
       resetTime: gemini5hReset,
       resetCountdown: this.formatCountdown(gemini5hReset),
       weeklyRemainingFraction: geminiWeeklyFraction,
-      weeklyRemainingPercent: `${(geminiWeeklyFraction * 100).toFixed(1)}%`,
+      weeklyRemainingPercent: formatFractionPercent(geminiWeeklyFraction),
       weeklyResetTime: geminiWeeklyReset,
       weeklyResetCountdown: this.formatWeeklyCountdown(geminiWeeklyReset),
       weeklyResetLabel: this.formatResetDate(geminiWeeklyReset),

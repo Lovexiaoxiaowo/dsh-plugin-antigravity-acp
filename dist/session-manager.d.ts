@@ -23,7 +23,7 @@ export declare class DshSessionManager {
     saveBinding(binding: AcpSessionBinding): void;
     incrementMessageCount(dshSessionId: string): void;
     removeBinding(dshSessionId: string): void;
-    recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>, promptChars?: number, outputChars?: number): TokenAccounting;
+    recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>, promptChars?: number, outputChars?: number, totalContextTokens?: number): TokenAccounting;
     getUsage(dshSessionId: string): TokenAccounting;
     /**
      * Prunes verbose tool executions, stdout dumps and plans from historical assistant messages

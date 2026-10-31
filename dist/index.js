@@ -441,6 +441,17 @@ export class DshAntigravityService {
                 : (quota?.token_count && Number(quota.token_count.input_tokens) <= 1_000_000 ? quota.token_count : null);
             const promptChars = typeof promptPayload === "string" ? promptPayload.length : JSON.stringify(promptPayload).length;
             const outputChars = writer.getRecordedTextLength();
+            // Calculate authentic cumulative session context tokens across all history turns
+            let totalContextTokens = 0;
+            if (Array.isArray(input)) {
+                const allTextLength = input
+                    .map((m) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content || "")))
+                    .join("").length;
+                totalContextTokens = Math.max(100, Math.ceil(allTextLength / 3.2));
+            }
+            else if (typeof input === "string") {
+                totalContextTokens = Math.max(100, Math.ceil(input.length / 3.2));
+            }
             const finalUsage = this.sessionManager.recordUsage(dshSessionId, rawTokens ? {
                 inputTokens: Number(rawTokens.input_tokens || rawTokens.inputTokens || rawTokens.promptTokenCount || 0),
                 outputTokens: Number(rawTokens.output_tokens || rawTokens.outputTokens || rawTokens.candidatesTokenCount || 0),
@@ -451,7 +462,7 @@ export class DshAntigravityService {
                     rawTokens.cacheReadTokens ||
                     rawTokens.cache_read_input_tokens ||
                     0),
-            } : {}, promptChars, outputChars);
+            } : {}, promptChars, outputChars, totalContextTokens);
             // Emit clean turn usage chunk to DSH on completion
             writer.writeUsage(finalUsage);
             writer.finish("stop");

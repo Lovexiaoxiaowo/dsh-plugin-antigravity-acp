@@ -520,6 +520,17 @@ export class DshAntigravityService {
       const promptChars = typeof promptPayload === "string" ? promptPayload.length : JSON.stringify(promptPayload).length;
       const outputChars = writer.getRecordedTextLength();
 
+      // Calculate authentic cumulative session context tokens across all history turns
+      let totalContextTokens = 0;
+      if (Array.isArray(input)) {
+        const allTextLength = input
+          .map((m: any) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content || "")))
+          .join("").length;
+        totalContextTokens = Math.max(100, Math.ceil(allTextLength / 3.2));
+      } else if (typeof input === "string") {
+        totalContextTokens = Math.max(100, Math.ceil(input.length / 3.2));
+      }
+
       const finalUsage = this.sessionManager.recordUsage(
         dshSessionId,
         rawTokens ? {
@@ -536,7 +547,8 @@ export class DshAntigravityService {
           ),
         } : {},
         promptChars,
-        outputChars
+        outputChars,
+        totalContextTokens
       );
 
       // Emit clean turn usage chunk to DSH on completion
