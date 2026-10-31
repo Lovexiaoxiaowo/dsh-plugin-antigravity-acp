@@ -443,25 +443,37 @@ window.__ModuleLoader__.load({
         var isReady = snapshot && snapshot.quota
         var quota = isReady ? snapshot.quota : null
         var weeklyPercent = (quota && quota.weeklyRemainingPercent) ? quota.weeklyRemainingPercent : '100.0%'
-        var weeklyFraction = (quota && quota.weeklyRemainingFraction != null) ? quota.weeklyRemainingFraction : 1.0
 
         var fraction = quota && quota.remainingFraction != null ? quota.remainingFraction : 1
+        var isExhausted = quota && quota.isWeeklyExhausted
+        var isCooling = quota && quota.is5hCooling
+        var isConstrained = quota && quota.isWeeklyConstrained
+
         var quotaColor = !isReady
           ? 'var(--dsw-alias-text-secondary, #94a3b8)'
+          : isExhausted
+          ? '#ef4444'
+          : isCooling
+          ? '#f59e0b'
           : fraction < 0.2
           ? '#ef4444'
           : fraction < 0.5
           ? '#f59e0b'
           : '#10b981'
 
-        var isQuotaWarn = isReady && fraction < 0.2
+        var isQuotaWarn = isReady && (isExhausted || fraction < 0.2)
 
-        var pillLabel = isReady
-          ? '5h ' + quota.remainingPercent
-          : '额度同步中'
-        var weeklyLabel = isReady
-          ? '周 ' + (quota.weeklyRemainingPercent || '100%')
-          : '周同步中'
+        var pillLabel = !isReady
+          ? '额度同步中'
+          : isExhausted
+          ? '周额度见底(0%)'
+          : isCooling
+          ? '5H冷却中(0%)'
+          : '5H ' + quota.remainingPercent
+
+        var weeklyLabel = !isReady
+          ? '周同步中'
+          : '周 ' + (quota.weeklyRemainingPercent || '100%')
 
         var pill = h(
           'div',
@@ -470,7 +482,7 @@ window.__ModuleLoader__.load({
               if (!showPopover) fetchQuota()
               setShowPopover(!showPopover)
             },
-            title: '点击展开 Google Antigravity 额度详情 (5H 滑动速率 & 7天周配额)',
+            title: '点击展开 Google Antigravity 配额看板 (5H 滑动速率 & 7天周总配额)',
             style: {
               display: 'inline-flex',
               alignItems: 'center',
@@ -525,7 +537,9 @@ window.__ModuleLoader__.load({
                   position: 'absolute',
                   bottom: 'calc(100% + 8px)',
                   right: 0,
-                  width: '320px',
+                  width: '350px',
+                  maxHeight: '520px',
+                  overflowY: 'auto',
                   padding: '14px',
                   backgroundColor: 'var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-base, #ffffff))',
                   border: '1px solid var(--dsw-alias-border-l1, var(--dsw-alias-border, rgba(127, 127, 127, 0.2)))',
@@ -554,7 +568,7 @@ window.__ModuleLoader__.load({
                   'div',
                   { style: { fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' } },
                   h('span', { style: { color: '#3b82f6' } }, '⚡'),
-                  'Google Antigravity 额度'
+                  'Google Antigravity 配额看板'
                 ),
                 h(
                   'span',
@@ -570,81 +584,209 @@ window.__ModuleLoader__.load({
                   (quota && quota.tier) ? quota.tier : 'Google AI'
                 )
               ),
-              // 5h Sliding Quota section
+              // Constrained / Warning Banner
+              isExhausted
+                ? h(
+                    'div',
+                    {
+                      style: {
+                        padding: '6px 8px',
+                        borderRadius: '6px',
+                        backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        color: '#ef4444',
+                        fontSize: '11px',
+                        fontWeight: '500',
+                        marginBottom: '10px',
+                      },
+                    },
+                    '🚨 7天周总配额已耗尽，已触发全局熔断保护'
+                  )
+                : isCooling
+                ? h(
+                    'div',
+                    {
+                      style: {
+                        padding: '6px 8px',
+                        borderRadius: '6px',
+                        backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                        border: '1px solid rgba(245, 158, 11, 0.3)',
+                        color: '#d97706',
+                        fontSize: '11px',
+                        fontWeight: '500',
+                        marginBottom: '10px',
+                      },
+                    },
+                    '⏳ 5小时瞬时并发打满，处于冷却恢复中'
+                  )
+                : isConstrained
+                ? h(
+                    'div',
+                    {
+                      style: {
+                        padding: '5px 8px',
+                        borderRadius: '6px',
+                        backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                        border: '1px solid rgba(59, 130, 246, 0.25)',
+                        color: 'var(--dsw-alias-primary, #2563eb)',
+                        fontSize: '10px',
+                        marginBottom: '10px',
+                      },
+                    },
+                    '⚖️ 遵循木桶短板原则：可用上限受 7天周总容量动态约束'
+                  )
+                : null,
+              // Current Model Active Dual Window
               h(
                 'div',
-                { style: { marginBottom: '12px' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
-                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '5小时滑动窗口额度'),
-                  h('span', { style: { fontWeight: '600', color: quotaColor } }, (quota && quota.remainingPercent) ? quota.remainingPercent : '正在同步...')
-                ),
-                h(
-                  'div',
-                  {
-                    style: {
-                      height: '6px',
-                      borderRadius: '3px',
-                      backgroundColor: 'var(--dsw-alias-fill-tsp-secondary, rgba(127, 127, 127, 0.16))',
-                      overflow: 'hidden',
-                      marginBottom: '4px',
-                    },
+                {
+                  style: {
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    backgroundColor: 'var(--dsw-alias-fill-tsp-component, rgba(127, 127, 127, 0.06))',
+                    marginBottom: '12px',
                   },
-                  h('div', {
-                    style: {
-                      height: '100%',
-                      width: (quota && quota.remainingPercent) ? quota.remainingPercent : '0%',
-                      backgroundColor: quotaColor,
-                      borderRadius: '3px',
-                      transition: 'width 0.3s ease',
-                    },
-                  })
-                ),
-                quota && quota.resetCountdown
-                  ? h(
-                      'div',
-                      { style: { fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #64748b)', textAlign: 'right' } },
-                      '下次平滑恢复: ' + quota.resetCountdown
-                    )
-                  : null
-              ),
-              // 7-day Weekly Limit section
-              h(
-                'div',
-                { style: { marginBottom: '12px' } },
+                },
                 h(
                   'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '4px' } },
-                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '7天自然周配额'),
-                  h('span', { style: { fontWeight: '600', color: '#10b981' } }, weeklyPercent)
+                  { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontWeight: '500', fontSize: '11px' } },
+                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '当前激活模型'),
+                  h('span', { style: { color: 'var(--dsw-alias-label-primary, #0f172a)' } }, (quota && quota.displayName) ? quota.displayName : 'Gemini 3.8 Flash')
                 ),
+                // 5h sliding bar
                 h(
                   'div',
-                  {
-                    style: {
-                      height: '6px',
-                      borderRadius: '3px',
-                      backgroundColor: 'var(--dsw-alias-fill-tsp-secondary, rgba(127, 127, 127, 0.16))',
-                      overflow: 'hidden',
-                      marginBottom: '4px',
+                  { style: { marginBottom: '8px' } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '3px', fontSize: '11px' } },
+                    h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '5小时滑动速率窗口'),
+                    h('span', { style: { fontWeight: '600', color: quotaColor } }, (quota && quota.remainingPercent) ? quota.remainingPercent : '同步中...')
+                  ),
+                  h(
+                    'div',
+                    {
+                      style: {
+                        height: '5px',
+                        borderRadius: '2.5px',
+                        backgroundColor: 'var(--dsw-alias-fill-tsp-secondary, rgba(127, 127, 127, 0.16))',
+                        overflow: 'hidden',
+                        marginBottom: '3px',
+                      },
                     },
-                  },
-                  h('div', {
-                    style: {
-                      height: '100%',
-                      width: weeklyPercent,
-                      backgroundColor: '#10b981',
-                      borderRadius: '3px',
-                      transition: 'width 0.3s ease',
-                    },
-                  })
+                    h('div', {
+                      style: {
+                        height: '100%',
+                        width: (quota && quota.remainingPercent) ? quota.remainingPercent : '0%',
+                        backgroundColor: quotaColor,
+                        borderRadius: '2.5px',
+                        transition: 'width 0.3s ease',
+                      },
+                    })
+                  ),
+                  quota && quota.resetCountdown
+                    ? h(
+                        'div',
+                        { style: { fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #64748b)', textAlign: 'right' } },
+                        '下次平滑恢复: ' + quota.resetCountdown
+                      )
+                    : null
                 ),
+                // Weekly bar
                 h(
                   'div',
-                  { style: { fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #64748b)', textAlign: 'right' } },
-                  '周额度充足 · 每周一 08:00 (UTC+8) 重置'
+                  null,
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '3px', fontSize: '11px' } },
+                    h('span', { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } }, '7天自然周总额度'),
+                    h('span', { style: { fontWeight: '600', color: '#10b981' } }, weeklyPercent)
+                  ),
+                  h(
+                    'div',
+                    {
+                      style: {
+                        height: '5px',
+                        borderRadius: '2.5px',
+                        backgroundColor: 'var(--dsw-alias-fill-tsp-secondary, rgba(127, 127, 127, 0.16))',
+                        overflow: 'hidden',
+                        marginBottom: '3px',
+                      },
+                    },
+                    h('div', {
+                      style: {
+                        height: '100%',
+                        width: weeklyPercent,
+                        backgroundColor: '#10b981',
+                        borderRadius: '2.5px',
+                        transition: 'width 0.3s ease',
+                      },
+                    })
+                  ),
+                  h(
+                    'div',
+                    { style: { fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #64748b)', textAlign: 'right' } },
+                    '周额度重置: ' + ((quota && quota.weeklyResetLabel) ? quota.weeklyResetLabel : '计算中') +
+                      ' (' + ((quota && quota.weeklyResetCountdown) ? quota.weeklyResetCountdown : '') + ')'
+                  )
                 )
+              ),
+              // Account Model Groups Overview Section
+              h(
+                'div',
+                { style: { marginBottom: '12px' } },
+                h(
+                  'div',
+                  {
+                    style: {
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: 'var(--dsw-alias-label-secondary, #475569)',
+                      marginBottom: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    },
+                  },
+                  '📊 账号全量模型配额池'
+                ),
+                (quota && quota.groups && quota.groups.length > 0)
+                  ? quota.groups.map(function(grp) {
+                      var isGrpGemini = grp.key === 'gemini'
+                      var icon = isGrpGemini ? '🔷' : '🟣'
+                      var fiveHourP = (grp.fiveHour && grp.fiveHour.remainingPercent) ? grp.fiveHour.remainingPercent : '100%'
+                      var weekP = (grp.weekly && grp.weekly.remainingPercent) ? grp.weekly.remainingPercent : '100%'
+                      return h(
+                        'div',
+                        {
+                          key: grp.key,
+                          style: {
+                            padding: '6px 8px',
+                            borderRadius: '6px',
+                            backgroundColor: 'var(--dsw-alias-fill-tsp-component, rgba(127, 127, 127, 0.05))',
+                            border: '1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.12))',
+                            marginBottom: '6px',
+                            fontSize: '10px',
+                          },
+                        },
+                        h(
+                          'div',
+                          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' } },
+                          h('span', { style: { fontWeight: '600', color: 'var(--dsw-alias-label-primary, #0f172a)' } }, icon + ' ' + grp.displayName),
+                          h(
+                            'span',
+                            { style: { color: 'var(--dsw-alias-label-secondary, #475569)' } },
+                            '5H: ' + fiveHourP + ' | 周: ' + weekP
+                          )
+                        ),
+                        h(
+                          'div',
+                          { style: { color: 'var(--dsw-alias-label-tertiary, #64748b)', fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
+                          grp.supportedModels ? grp.supportedModels.join(' · ') : ''
+                        )
+                      )
+                    })
+                  : null
               ),
               // Quota Rolling & Weekly Reset explanation card
               h(
@@ -663,23 +805,30 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { style: { fontWeight: '600', color: 'var(--dsw-alias-primary, #2563eb)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' } },
-                  '⏱️ 额度恢复与重置周期'
+                  '⏱️ 额度恢复与重置机制'
                 ),
                 h(
                   'div',
-                  { style: { color: 'var(--dsw-alias-label-secondary, #334155)', marginBottom: '4px' } },
-                  '• 5小时滑动速率窗口：下次平滑恢复 ' +
-                    ((quota && quota.resetCountdown) ? quota.resetCountdown : '计算中')
+                  { style: { color: 'var(--dsw-alias-label-secondary, #334155)', marginBottom: '3px' } },
+                  '• 5小时滑动速率窗口：平滑削峰防并发，下次平滑恢复 ' +
+                    ((quota && quota.resetCountdown) ? quota.resetCountdown : '已恢复')
                 ),
                 h(
                   'div',
                   { style: { color: 'var(--dsw-alias-primary, #0284c7)', marginBottom: '2px' } },
-                  '• 📅 周额度重置：' +
-                    ((quota && quota.weeklyResetLabel) ? quota.weeklyResetLabel : '每周一 08:00 (UTC+8)') +
+                  '• 📅 7天周额度重置：' +
+                    ((quota && quota.weeklyResetLabel) ? quota.weeklyResetLabel : '自然周动态重置') +
                     ' (还剩 ' +
                     ((quota && quota.weeklyResetCountdown) ? quota.weeklyResetCountdown : '计算中') +
                     ')'
-                )
+                ),
+                (quota && quota.weeklyDescription)
+                  ? h(
+                      'div',
+                      { style: { color: 'var(--dsw-alias-label-tertiary, #64748b)', fontSize: '9px', marginTop: '2px' } },
+                      '💡 官方说明: ' + quota.weeklyDescription
+                    )
+                  : null
               ),
               // Footer
               h(
@@ -691,9 +840,11 @@ window.__ModuleLoader__.load({
                     alignItems: 'center',
                     fontSize: '10px',
                     color: 'var(--dsw-alias-label-tertiary, #94a3b8)',
+                    borderTop: '1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.12))',
+                    paddingTop: '6px',
                   },
                 },
-                h('span', null, '实时同步自 Google 官方额度'),
+                h('span', null, '同步自 Google 官方主力端点'),
                 h(
                   'span',
                   {
@@ -703,7 +854,7 @@ window.__ModuleLoader__.load({
                       fetchQuota()
                     },
                   },
-                  '刷新'
+                  '立即刷新'
                 )
               )
             )

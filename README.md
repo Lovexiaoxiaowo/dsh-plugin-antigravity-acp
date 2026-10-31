@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.13-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.14-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,18 @@
 ---
 
 ## 版本更新日志 (Changelog)
+
+### v1.0.14 (2026-10-31)
+- **Token 暴涨与 49% 缓存命中率失真根治（Token Multiplier & Cache Accounting Fix）**：
+  - 阻断流式中间工具步高频发射全局 `usage` 数据块，解决 DSH `addUsage` 累加器将单步累积水位重复叠加数十次导致单轮飙升 10M+、全会话虚增至 120M 的假账问题；
+  - 修正底层 Token 记账算式（`total = input + output`，剔除把 `cachedTokens` 作为独立加数的双重叠加），恢复真实 **85%~95%+** 缓存命中率。
+- **历史上下文脱敏与工具输出折叠（Context De-bloating & Pruning）**：
+  - 历史回溯自动折叠既往 Assistant 轮次中动辄数千行的原生工具控制台输出代码块（`> \`\`\`...`），防止多轮历史滚雪球式打爆上下文；
+  - 纯化用户真实提问，剔除 DSH `<USER_REQUEST>` 冗余标签与空转时间戳元数据。
+- **真实周配额接口对接与木桶短板约束（Official Quota & Constrained Engine）**：
+  - 对接 Google 官方主力端点 `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`（带多级备用降级），淘汰假数据与硬编码；
+  - 参考 `Antigravity-Manager` 机制，实现 5H 削峰速率窗口与 7 天周配额的双向木桶短板约束、周总额度熔断（`isWeeklyExhausted`）与 5H 冷却标识（`is5hCooling`）；
+  - 悬浮卡片中呈现 **🔷 Gemini 官方核心模型池** 与 **🟣 Claude & GPT 托管模型池** 全量分组健康看板。
 
 ### v1.0.13 (2026-10-31)
 - **浅色与深色模式自适应适配（Light & Dark Theme Parity）**：

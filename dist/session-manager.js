@@ -77,7 +77,7 @@ export class DshSessionManager {
         this.bindings.delete(dshSessionId);
         this.saveToDisk();
     }
-    recordUsage(dshSessionId, snapshot) {
+    recordUsage(dshSessionId, snapshot, promptChars = 0, outputChars = 0) {
         const current = this.tokenStats.get(dshSessionId) || {
             inputTokens: 0,
             outputTokens: 0,
@@ -86,25 +86,50 @@ export class DshSessionManager {
             totalTokens: 0,
             currentContextTokens: 0,
         };
-        // In ACP protocol, usage_update and response token_count represent cumulative
-        // or per-step context size, NOT pure deltas.
-        // inputTokens & cachedTokens denote current step model context window occupancy.
         const inTokens = Number(snapshot.inputTokens || 0);
-        const cachedTokens = Number(snapshot.cachedTokens || 0);
         const outTokens = Number(snapshot.outputTokens || 0);
         const reasonTokens = Number(snapshot.reasoningTokens || 0);
-        // Keep highest watermark for input & cached to reflect true context window usage
-        current.inputTokens = Math.max(current.inputTokens, inTokens);
-        current.cachedTokens = Math.max(current.cachedTokens, cachedTokens);
-        current.outputTokens = Math.max(current.outputTokens, outTokens);
-        current.reasoningTokens = Math.max(current.reasoningTokens, reasonTokens);
-        // Current context size for this turn
-        const stepContext = inTokens + cachedTokens;
-        current.currentContextTokens = Math.max(current.currentContextTokens || 0, stepContext, current.inputTokens);
-        current.totalTokens = current.inputTokens + current.outputTokens + current.cachedTokens;
+        // Compute genuine turn-level tokens for this specific step/turn.
+        // Notice: Any raw metric > 1,000,000 is an account-level cumulative quota meter from Google, NOT a turn delta!
+        let turnIn = 0;
+        if (inTokens > 0 && inTokens <= 1_000_000) {
+            turnIn = inTokens;
+        }
+        else if (promptChars > 0) {
+            turnIn = Math.max(10, Math.ceil(promptChars / 3.5));
+        }
+        else {
+            turnIn = 50;
+        }
+        let turnOut = 0;
+        if (outTokens > 0) {
+            turnOut = outTokens;
+        }
+        else if (outputChars > 0) {
+            turnOut = Math.max(1, Math.ceil(outputChars / 3.5));
+        }
+        else {
+            turnOut = 20;
+        }
+        const turnReason = reasonTokens > 0 ? reasonTokens : 0;
+        const turnTotal = turnIn + turnOut;
+        // Track cumulative session totals in memory
+        current.inputTokens += turnIn;
+        current.outputTokens += turnOut;
+        current.reasoningTokens += turnReason;
+        current.totalTokens = current.inputTokens + current.outputTokens;
+        current.currentContextTokens = turnIn;
         this.tokenStats.set(dshSessionId, current);
         this.saveToDisk();
-        return { ...current };
+        // Return the TURN DELTA for DSH writeUsage so DSH does not inflate turn usage to millions
+        return {
+            inputTokens: turnIn,
+            outputTokens: turnOut,
+            reasoningTokens: turnReason,
+            cachedTokens: 0,
+            totalTokens: turnTotal,
+            currentContextTokens: turnIn,
+        };
     }
     getUsage(dshSessionId) {
         return (this.tokenStats.get(dshSessionId) || {
@@ -117,20 +142,53 @@ export class DshSessionManager {
         });
     }
     /**
-     * Checks whether a DSH message is an automated system/environment injection
-     * (e.g. @deepseek-ai/dsh-time-context timestamp strings) rather than a direct user prompt.
+     * Prunes verbose tool executions, stdout dumps and plans from historical assistant messages
+     * before sending conversation history to the model, keeping the reconstructed prompt ultra-compact.
      */
+    pruneAssistantHistory(text) {
+        if (!text)
+            return "";
+        let cleaned = text.replace(/>\s*🛠️[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+        cleaned = cleaned.replace(/>\s*✅[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+        cleaned = cleaned.replace(/>\s*❌[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+        cleaned = cleaned.replace(/>\s*⚡[\s\S]*?(?=\n\n|\n[^\>]|$)/g, "");
+        cleaned = cleaned.replace(/>\s*```[\s\S]*?```/g, "");
+        cleaned = cleaned.replace(/📋\s*\*\*\[任务计划\]\*\*[\s\S]*?(?=\n\n|$)/g, "");
+        cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+        if (cleaned.length > 2000) {
+            cleaned = cleaned.slice(0, 2000) + "\n...[历史较长，已自动截断精简]...";
+        }
+        return cleaned.trim();
+    }
+    cleanUserQuery(text) {
+        if (!text)
+            return "";
+        const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
+        let cleaned = match && match[1]?.trim() ? match[1].trim() : text.trim();
+        cleaned = cleaned.replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, "").trim();
+        return cleaned;
+    }
     isSystemInjection(msg) {
         if (!msg)
             return true;
         if (msg.role === "system" || msg.role === "developer")
             return true;
-        const sourceKind = msg.source?.kind;
-        if (sourceKind === "time-context" || sourceKind === "system-reminder" || sourceKind === "snapshot") {
-            return true;
+        const source = msg.source;
+        if (source) {
+            const sourceKind = source.kind;
+            if (sourceKind && sourceKind !== "user" && sourceKind !== "human") {
+                return true;
+            }
+            if (source.form === "snapshot" || source.form === "system") {
+                return true;
+            }
         }
         const text = this.extractText(msg).trim();
-        if (text.startsWith("Time sampled while preparing turn")) {
+        if (text.startsWith("Time sampled while preparing turn") ||
+            text.startsWith("Current runtime context") ||
+            text.startsWith("Current working directory:") ||
+            text.startsWith("Current DSH file policy:") ||
+            text.startsWith("Approval policy:")) {
             return true;
         }
         return false;
@@ -254,7 +312,8 @@ export class DshSessionManager {
             }
         }
         if (accumulatedText) {
-            blocks.unshift({ type: "text", text: accumulatedText });
+            const cleaned = this.cleanUserQuery(accumulatedText);
+            blocks.unshift({ type: "text", text: cleaned || accumulatedText });
         }
         if (blocks.length === 0) {
             blocks.push({ type: "text", text: "" });
@@ -309,7 +368,13 @@ export class DshSessionManager {
             if (this.isSystemInjection(m))
                 continue;
             const role = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
-            const content = this.extractText(m).trim();
+            let content = this.extractText(m).trim();
+            if (m.role === "assistant") {
+                content = this.pruneAssistantHistory(content);
+            }
+            else if (m.role === "user") {
+                content = this.cleanUserQuery(content);
+            }
             if (content) {
                 historyLines.push(`[${role}]:\n${content}\n`);
             }
@@ -362,7 +427,13 @@ export class DshSessionManager {
             if (this.isSystemInjection(m))
                 continue;
             const role = m.role === "assistant" ? "Assistant" : m.role === "system" ? "System" : "User";
-            const content = this.extractText(m).trim();
+            let content = this.extractText(m).trim();
+            if (m.role === "assistant") {
+                content = this.pruneAssistantHistory(content);
+            }
+            else if (m.role === "user") {
+                content = this.cleanUserQuery(content);
+            }
             if (content) {
                 historyLines.push(`[${role}]:\n${content}\n`);
             }

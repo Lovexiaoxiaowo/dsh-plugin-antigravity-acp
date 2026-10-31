@@ -154,15 +154,18 @@ export function mapSessionUpdate(
       const status = update.status && update.status !== "in_progress" ? ` · ${update.status}` : "";
       const argsStr = formatArguments(update.arguments);
       const argSection = argsStr ? `\n> 📥 参数: \`${argsStr}\`` : "";
+      const isSubagent = toolName.includes("subagent") || Boolean(update.title && update.title.includes("subagent"));
 
       return [
         {
           type: "tool",
-          text: `\n> 🛠️ **[${stepLabel}]**${titlePart}${status}${argSection}\n`,
+          text: isSubagent ? `\n> 🤖 **[${stepLabel}] 派发独立子任务 (Subagent)**${titlePart}\n` : `\n> 🛠️ **[${stepLabel}]**${titlePart}${status}${argSection}\n`,
           toolCallId: toolId,
           name: toolName,
           args: argsStr,
+          rawArgs: update.arguments,
           isStart: true,
+          isSubagent,
         },
       ];
     }
@@ -183,7 +186,16 @@ export function mapSessionUpdate(
 
       const titlePart = (displayTitle && displayTitle !== stepLabel) ? ` \`${displayTitle}\`` : "";
       const details = formatToolContent(update.content);
-      const detailSection = details ? `\n> \`\`\`\n${details.split("\n").map(l => `> ${l}`).join("\n")}\n> \`\`\`` : "";
+      let detailSection = "";
+      if (details) {
+        const lines = details.split("\n").filter(Boolean);
+        if (details.length <= 250 && lines.length <= 3) {
+          detailSection = `\n> \`\`\`\n${lines.map(l => `> ${l}`).join("\n")}\n> \`\`\``;
+        } else {
+          const preview = lines.slice(0, 2).map(l => `> ${l}`).join("\n");
+          detailSection = `\n> \`\`\`\n${preview}\n> ... [已折叠 ${lines.length} 行输出] ...\n> \`\`\``;
+        }
+      }
 
       return [
         {
@@ -213,20 +225,21 @@ export function mapSessionUpdate(
     }
 
     case "usage_update": {
-      const quota = update.quota || update._meta?.quota;
-      const tokens = quota?.token_count || update.token_count;
+      // Ignore account-level cumulative quota meters (>1M tokens) to prevent DSH token counter explosion
+      const tokens = update.token_count || update.usage;
       if (tokens) {
-        const usage: TokenAccounting = {
-          inputTokens: Number(tokens.input_tokens || 0),
-          outputTokens: Number(tokens.output_tokens || 0),
-          reasoningTokens: Number(tokens.thought_tokens || 0),
-          cachedTokens: Number(tokens.cached_tokens || 0),
-          totalTokens:
-            Number(tokens.input_tokens || 0) +
-            Number(tokens.output_tokens || 0) +
-            Number(tokens.cached_tokens || 0),
-        };
-        return [{ type: "usage", usage }];
+        const inTokens = Number(tokens.input_tokens || tokens.inputTokens || 0);
+        const outTokens = Number(tokens.output_tokens || tokens.outputTokens || 0);
+        if (inTokens > 0 && inTokens <= 1_000_000) {
+          const usage: TokenAccounting = {
+            inputTokens: inTokens,
+            outputTokens: outTokens,
+            reasoningTokens: Number(tokens.thought_tokens || 0),
+            cachedTokens: Number(tokens.cached_tokens || 0),
+            totalTokens: inTokens + outTokens,
+          };
+          return [{ type: "usage", usage }];
+        }
       }
       return [];
     }
@@ -252,9 +265,14 @@ export class DshStreamWriter {
   private textClosed = false;
   private textBuffer = "";
 
+  private nextBlockIndex = 2;
   private hasEnded = false;
 
   constructor(private readonly pushChunk: (chunk: any) => void) {}
+
+  getRecordedTextLength(): number {
+    return this.textBuffer.length;
+  }
 
   ensureReasoningOpen(): void {
     if (this.hasEnded || this.reasoningClosed) return;
@@ -271,11 +289,14 @@ export class DshStreamWriter {
   writeThinking(text: string): void {
     if (!text || this.hasEnded) return;
 
-    // If text output has already started, index 0 reasoning block is already sealed.
-    // Divert any trailing tool/plan feedback directly into the active text block
-    // to strictly preserve DSH block lifecycle and prevent block index collisions.
+    // Prevent giant raw tool execution outputs from polluting the assistant's permanent text response
     if (this.textStarted && !this.textClosed) {
-      this.writeText(text);
+      if (text.includes("```")) {
+        const compact = text.replace(/```[\s\S]*?```/g, "[已折叠长输出]");
+        this.writeText(compact);
+      } else {
+        this.writeText(text);
+      }
       return;
     }
 
@@ -285,6 +306,46 @@ export class DshStreamWriter {
       type: "reasoning-delta",
       index: 0,
       text,
+    });
+  }
+
+  writeToolCall(id: string, name: string, args: string | Record<string, any>): void {
+    if (this.hasEnded) return;
+    this.closeReasoningBlock();
+    this.closeTextBlock();
+
+    const callIndex = this.nextBlockIndex++;
+    const argsStr = typeof args === "string" ? args : JSON.stringify(args);
+
+    this.pushChunk({
+      type: "block-start",
+      index: callIndex,
+      blockType: "tool_call",
+    });
+
+    this.pushChunk({
+      type: "tool-call-delta",
+      index: callIndex,
+      id,
+      name,
+      argumentsDelta: argsStr,
+    });
+
+    this.pushChunk({
+      type: "block-end",
+      index: callIndex,
+      block: {
+        type: "tool-call",
+        id,
+        name,
+        arguments: argsStr,
+      },
+    });
+
+    this.hasEnded = true;
+    this.pushChunk({
+      type: "finish",
+      reason: { kind: "tool_calls" },
     });
   }
 

@@ -100,6 +100,7 @@ export declare class DshAntigravityService {
         sessionId?: string;
         model?: string;
         reasoningEffort?: ReasoningEffort;
+        tools?: any[];
     }): AsyncIterable<any>;
     /**
      * Quick completion test helper for DSH UI / card test

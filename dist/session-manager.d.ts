@@ -9,12 +9,14 @@ export declare class DshSessionManager {
     saveBinding(binding: AcpSessionBinding): void;
     incrementMessageCount(dshSessionId: string): void;
     removeBinding(dshSessionId: string): void;
-    recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>): TokenAccounting;
+    recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>, promptChars?: number, outputChars?: number): TokenAccounting;
     getUsage(dshSessionId: string): TokenAccounting;
     /**
-     * Checks whether a DSH message is an automated system/environment injection
-     * (e.g. @deepseek-ai/dsh-time-context timestamp strings) rather than a direct user prompt.
+     * Prunes verbose tool executions, stdout dumps and plans from historical assistant messages
+     * before sending conversation history to the model, keeping the reconstructed prompt ultra-compact.
      */
+    pruneAssistantHistory(text: string): string;
+    cleanUserQuery(text: string): string;
     isSystemInjection(msg: any): boolean;
     /**
      * Safely extracts text content from various DSH Message block structures.

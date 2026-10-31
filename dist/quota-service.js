@@ -1,13 +1,52 @@
 import { getFreshAccessToken } from "./auth.js";
 const DEFAULT_MAX_TOKENS = 1_000_000; // 1M tokens for Gemini 3.x models
+// Fallback order: Daily -> Sandbox -> Prod (aligned with official Antigravity Language Server & Antigravity-Manager)
+const FETCH_MODELS_ENDPOINTS = [
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+];
+const QUOTA_SUMMARY_ENDPOINTS = [
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+];
+const LOAD_TIER_ENDPOINTS = [
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+];
 export class AntigravityQuotaService {
     sessionManager;
     cachedModelsData = null;
     cachedTierData = null;
+    cachedSummaryData = null;
     lastFetchTime = 0;
     CACHE_TTL_MS = 15_000; // 15s cache
     constructor(sessionManager) {
         this.sessionManager = sessionManager;
+    }
+    async postWithFallback(endpoints, token, body) {
+        for (const ep of endpoints) {
+            try {
+                const res = await fetch(ep, {
+                    method: "POST",
+                    headers: {
+                        authorization: `Bearer ${token}`,
+                        "content-type": "application/json",
+                        "user-agent": "antigravity",
+                    },
+                    body: JSON.stringify(body),
+                });
+                if (res.ok) {
+                    return await res.json();
+                }
+            }
+            catch (err) {
+                // Try next fallback endpoint
+            }
+        }
+        return null;
     }
     async fetchUpstreamData() {
         const now = Date.now();
@@ -18,38 +57,25 @@ export class AntigravityQuotaService {
         if (!token)
             return;
         try {
-            // 1. Fetch Available Models & Quota info
-            const modelsPromise = fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
-                method: "POST",
-                headers: {
-                    authorization: `Bearer ${token}`,
-                    "content-type": "application/json",
-                    "user-agent": "antigravity",
-                },
-                body: JSON.stringify({}),
-            }).then(async (r) => (r.ok ? await r.json() : null));
-            // 2. Fetch User Tier info
-            const tierPromise = fetch("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", {
-                method: "POST",
-                headers: {
-                    authorization: `Bearer ${token}`,
-                    "content-type": "application/json",
-                    "user-agent": "antigravity",
-                },
-                body: JSON.stringify({
+            const [modelsData, tierData, summaryData] = await Promise.all([
+                this.postWithFallback(FETCH_MODELS_ENDPOINTS, token, {}),
+                this.postWithFallback(LOAD_TIER_ENDPOINTS, token, {
                     metadata: {
-                        ideType: "IDE_UNSPECIFIED",
+                        ideType: "ANTIGRAVITY",
                         pluginVersion: "1.0.0",
                     },
                 }),
-            }).then(async (r) => (r.ok ? await r.json() : null));
-            const [modelsData, tierData] = await Promise.all([modelsPromise, tierPromise]);
+                this.postWithFallback(QUOTA_SUMMARY_ENDPOINTS, token, {}),
+            ]);
             if (modelsData?.models) {
                 this.cachedModelsData = modelsData.models;
                 this.lastFetchTime = now;
             }
             if (tierData) {
                 this.cachedTierData = tierData;
+            }
+            if (summaryData) {
+                this.cachedSummaryData = summaryData;
             }
         }
         catch (err) {
@@ -62,34 +88,45 @@ export class AntigravityQuotaService {
         const target = new Date(resetTimeStr).getTime();
         const diff = target - Date.now();
         if (diff <= 0)
-            return "已重置";
+            return "已平滑恢复";
         const hours = Math.floor(diff / (1000 * 60 * 60));
         const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
         const secs = Math.floor((diff % (1000 * 60)) / 1000);
         const pad = (n) => n.toString().padStart(2, "0");
         return `${pad(hours)}:${pad(mins)}:${pad(secs)}`;
     }
-    getWeeklyResetInfo() {
-        const now = new Date();
-        // Google Cloud / Antigravity 官方自然周结算点：每周一 00:00:00 UTC (北京时间周一 08:00)
-        const nextMonday = new Date(now.getTime());
-        const currentDay = nextMonday.getUTCDay(); // 0 is Sunday, 1 is Monday...
-        const daysUntilMonday = (8 - currentDay) % 7 || 7;
-        nextMonday.setUTCDate(nextMonday.getUTCDate() + daysUntilMonday);
-        nextMonday.setUTCHours(0, 0, 0, 0);
-        const diff = nextMonday.getTime() - now.getTime();
+    formatWeeklyCountdown(resetTimeStr) {
+        if (!resetTimeStr)
+            return "计算中";
+        const target = new Date(resetTimeStr).getTime();
+        const diff = target - Date.now();
+        if (diff <= 0)
+            return "已重置";
         const days = Math.floor(diff / (1000 * 60 * 60 * 24));
         const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
         const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        return {
-            weeklyResetTime: nextMonday.toISOString(),
-            weeklyResetCountdown: `${days}天${hours}小时${mins}分`,
-            weeklyResetLabel: "每周一 08:00 (UTC+8)",
-        };
+        if (days > 0) {
+            return `${days}天${hours}小时`;
+        }
+        return `${hours}小时${mins}分`;
+    }
+    formatResetDate(resetTimeStr) {
+        if (!resetTimeStr)
+            return "自然周动态重置";
+        try {
+            const d = new Date(resetTimeStr);
+            const month = d.getMonth() + 1;
+            const date = d.getDate();
+            const hours = d.getHours().toString().padStart(2, "0");
+            const mins = d.getMinutes().toString().padStart(2, "0");
+            return `${month}月${date}日 ${hours}:${mins}`;
+        }
+        catch {
+            return "自然周动态重置";
+        }
     }
     async getSnapshot(sessionId, modelId = "gemini-3.8-flash") {
         await this.fetchUpstreamData();
-        // Look for matching model quota or fallback to closest flash model
         const models = this.cachedModelsData || {};
         const normalizedTarget = modelId.toLowerCase().replace(/[^a-z0-9]/g, "");
         let modelEntry = models[modelId] ||
@@ -98,7 +135,7 @@ export class AntigravityQuotaService {
         if (!modelEntry) {
             for (const [k, v] of Object.entries(models)) {
                 if (k.startsWith("tab_") || k.startsWith("chat_"))
-                    continue; // Skip tab completion models
+                    continue;
                 const normK = k.toLowerCase().replace(/[^a-z0-9]/g, "");
                 if (normK.includes(normalizedTarget) || normalizedTarget.includes(normK)) {
                     modelEntry = v;
@@ -116,28 +153,148 @@ export class AntigravityQuotaService {
                 }
             }
         }
-        const quotaInfo = modelEntry?.quotaInfo;
-        const fraction = typeof quotaInfo?.remainingFraction === "number" ? quotaInfo.remainingFraction : 1.0;
-        const resetTime = quotaInfo?.resetTime;
-        const maxContextTokens = Number(modelEntry?.maxTokens || DEFAULT_MAX_TOKENS);
+        // 1. Resolve Tier identity
         const tierName = this.cachedTierData?.paidTier?.name ||
             this.cachedTierData?.currentTier?.name ||
             "Google AI";
-        const weeklyInfo = this.getWeeklyResetInfo();
+        // 2. Parse Grouped Quotas from retrieveUserQuotaSummary
+        const summaryGroups = this.cachedSummaryData?.groups || [];
+        // Find Claude & GPT (3P) group
+        const thirdPartyGroup = summaryGroups.find((g) => {
+            const name = (g.displayName || "").toLowerCase();
+            return name.includes("claude") || name.includes("gpt") || name.includes("3p");
+        });
+        const tp5hBucket = thirdPartyGroup?.buckets?.find((b) => /5h|hour/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+        const tpWeeklyBucket = thirdPartyGroup?.buckets?.find((b) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+        // Find Gemini Group if explicitly present in summary
+        const geminiGroupFromSummary = summaryGroups.find((g) => {
+            const name = (g.displayName || "").toLowerCase();
+            return !name.includes("claude") && !name.includes("gpt") && (name.includes("gemini") || !name.includes("3p"));
+        });
+        const summaryGemini5hBucket = geminiGroupFromSummary?.buckets?.find((b) => /5h|hour/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+        const summaryGeminiWeeklyBucket = geminiGroupFromSummary?.buckets?.find((b) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+        // Global/Account Weekly Bucket fallback (weekly capacity across all groups)
+        const anyWeeklyBucket = summaryGeminiWeeklyBucket ||
+            tpWeeklyBucket ||
+            summaryGroups
+                .flatMap((g) => g.buckets || [])
+                .find((b) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+        // Gemini 5h quota from model or summary
+        const geminiModelQuotaInfo = modelEntry?.quotaInfo;
+        const gemini5hFraction = typeof geminiModelQuotaInfo?.remainingFraction === "number"
+            ? geminiModelQuotaInfo.remainingFraction
+            : typeof summaryGemini5hBucket?.remainingFraction === "number"
+                ? summaryGemini5hBucket.remainingFraction
+                : 1.0;
+        const gemini5hReset = geminiModelQuotaInfo?.resetTime || summaryGemini5hBucket?.resetTime;
+        // Gemini Weekly quota
+        const geminiWeeklyFraction = typeof summaryGeminiWeeklyBucket?.remainingFraction === "number"
+            ? summaryGeminiWeeklyBucket.remainingFraction
+            : typeof anyWeeklyBucket?.remainingFraction === "number"
+                ? anyWeeklyBucket.remainingFraction
+                : 1.0;
+        const geminiWeeklyReset = summaryGeminiWeeklyBucket?.resetTime || anyWeeklyBucket?.resetTime;
+        const geminiWeeklyDesc = summaryGeminiWeeklyBucket?.description || anyWeeklyBucket?.description;
+        // Claude & GPT 5h & Weekly
+        const tp5hFraction = typeof tp5hBucket?.remainingFraction === "number" ? tp5hBucket.remainingFraction : 1.0;
+        const tp5hReset = tp5hBucket?.resetTime;
+        const tpWeeklyFraction = typeof tpWeeklyBucket?.remainingFraction === "number"
+            ? tpWeeklyBucket.remainingFraction
+            : typeof anyWeeklyBucket?.remainingFraction === "number"
+                ? anyWeeklyBucket.remainingFraction
+                : 1.0;
+        const tpWeeklyReset = tpWeeklyBucket?.resetTime || anyWeeklyBucket?.resetTime;
+        const tpWeeklyDesc = tpWeeklyBucket?.description || anyWeeklyBucket?.description;
+        // 3. Constrained Quota (Wood Barrel Short-board Logic) for Active Model
+        const isWeeklyExhausted = geminiWeeklyFraction <= 0.001;
+        const is5hCooling = gemini5hFraction <= 0.001 && geminiWeeklyFraction > 0.001;
+        const isWeeklyConstrained = isWeeklyExhausted || geminiWeeklyFraction < gemini5hFraction;
+        const effectiveFraction = isWeeklyExhausted ? 0 : Math.min(gemini5hFraction, geminiWeeklyFraction);
+        const effectivePercent = `${(effectiveFraction * 100).toFixed(1)}%`;
+        const maxContextTokens = Number(modelEntry?.maxTokens || DEFAULT_MAX_TOKENS);
+        // Build Model Groups array
+        const groups = [
+            {
+                key: "gemini",
+                displayName: "Gemini 官方模型池",
+                description: "Gemini 3.8 Flash, 2.5 Pro, 2.5 Flash, 3.1 Image 等官方核心模型",
+                supportedModels: [
+                    "Gemini 3.8 Flash",
+                    "Gemini 2.5 Pro",
+                    "Gemini 2.5 Flash",
+                    "Gemini 3.1 Flash Image",
+                    "Gemini 2.5 Thinking",
+                    "Gemini 3.5 Flash-Lite",
+                ],
+                fiveHour: {
+                    remainingFraction: gemini5hFraction,
+                    remainingPercent: `${(gemini5hFraction * 100).toFixed(1)}%`,
+                    resetTime: gemini5hReset,
+                    resetCountdown: this.formatCountdown(gemini5hReset),
+                },
+                weekly: {
+                    remainingFraction: geminiWeeklyFraction,
+                    remainingPercent: `${(geminiWeeklyFraction * 100).toFixed(1)}%`,
+                    resetTime: geminiWeeklyReset,
+                    resetCountdown: this.formatWeeklyCountdown(geminiWeeklyReset),
+                    description: geminiWeeklyDesc,
+                },
+                effectiveFraction,
+                effectivePercent,
+                isWeeklyExhausted,
+                isWeeklyConstrained,
+                is5hCooling,
+            },
+            {
+                key: "claude",
+                displayName: "Claude & GPT 托管模型池",
+                description: "Claude Opus 4.6 Thinking, Claude Sonnet 4.6, GPT-OSS 120B",
+                supportedModels: [
+                    "Claude Opus 4.6 Thinking",
+                    "Claude Sonnet 4.6",
+                    "GPT-OSS 120B Medium",
+                ],
+                fiveHour: {
+                    remainingFraction: tp5hFraction,
+                    remainingPercent: `${(tp5hFraction * 100).toFixed(1)}%`,
+                    resetTime: tp5hReset,
+                    resetCountdown: this.formatCountdown(tp5hReset),
+                },
+                weekly: {
+                    remainingFraction: tpWeeklyFraction,
+                    remainingPercent: `${(tpWeeklyFraction * 100).toFixed(1)}%`,
+                    resetTime: tpWeeklyReset,
+                    resetCountdown: this.formatWeeklyCountdown(tpWeeklyReset),
+                    description: tpWeeklyDesc,
+                },
+                effectiveFraction: tpWeeklyFraction <= 0.001 ? 0 : Math.min(tp5hFraction, tpWeeklyFraction),
+                effectivePercent: `${(Math.min(tp5hFraction, tpWeeklyFraction) * 100).toFixed(1)}%`,
+                isWeeklyExhausted: tpWeeklyFraction <= 0.001,
+                isWeeklyConstrained: tpWeeklyFraction < tp5hFraction,
+                is5hCooling: tp5hFraction <= 0.001 && tpWeeklyFraction > 0.001,
+            },
+        ];
         const quotaSummary = {
             model: modelId,
             displayName: modelEntry?.displayName || "Gemini 3.8 Flash (Antigravity)",
-            remainingFraction: fraction,
-            remainingPercent: `${(fraction * 100).toFixed(1)}%`,
-            resetTime,
-            resetCountdown: this.formatCountdown(resetTime),
-            weeklyRemainingFraction: 1.0,
-            weeklyRemainingPercent: "100.0%",
-            weeklyResetTime: weeklyInfo.weeklyResetTime,
-            weeklyResetCountdown: weeklyInfo.weeklyResetCountdown,
-            weeklyResetLabel: weeklyInfo.weeklyResetLabel,
+            remainingFraction: gemini5hFraction,
+            remainingPercent: `${(gemini5hFraction * 100).toFixed(1)}%`,
+            resetTime: gemini5hReset,
+            resetCountdown: this.formatCountdown(gemini5hReset),
+            weeklyRemainingFraction: geminiWeeklyFraction,
+            weeklyRemainingPercent: `${(geminiWeeklyFraction * 100).toFixed(1)}%`,
+            weeklyResetTime: geminiWeeklyReset,
+            weeklyResetCountdown: this.formatWeeklyCountdown(geminiWeeklyReset),
+            weeklyResetLabel: this.formatResetDate(geminiWeeklyReset),
+            weeklyDescription: geminiWeeklyDesc,
+            effectiveFraction,
+            effectivePercent,
+            isWeeklyExhausted,
+            isWeeklyConstrained,
+            is5hCooling,
             tier: tierName,
             maxTokens: maxContextTokens,
+            groups,
         };
         // Session token accounting and context calculation
         const sessionTokens = sessionId
@@ -149,7 +306,6 @@ export class AntigravityQuotaService {
                 cachedTokens: 0,
                 totalTokens: 0,
             };
-        // Context window usage corresponds to active prompt context footprint (input + cached read)
         const activeContext = sessionTokens.currentContextTokens ||
             (sessionTokens.inputTokens > 0 ? sessionTokens.inputTokens : sessionTokens.totalTokens);
         const usedTokens = activeContext;

@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.13-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.14-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,16 @@ The plugin includes a dedicated settings UI and background services. Once instal
 ---
 
 ## Changelog
+
+### v1.0.14 (2026-10-31)
+- **Official Quota Summary Integration**:
+  - Connected to Google's primary endpoint `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` with multi-tier fallback;
+  - Eliminated mock 1.0 values and fixed Monday calculations; retrieves authentic 7-day weekly quota percentages, dynamic reset timestamps, and official descriptions.
+- **Wood Barrel Constrained Quota Engine**:
+  - Implemented dual-window short-board quota constraints (5-hour rate window vs. 7-day weekly limit) inspired by Antigravity-Manager;
+  - Added weekly exhaustion circuit breaker (`isWeeklyExhausted`), 5H cooling state (`is5hCooling`), and weekly constraint alerts.
+- **Account Model Group Pools Board**:
+  - Popover modal now displays real-time health for both **Gemini Core Models** (Gemini 3.8 Flash, 2.5 Pro, 2.5 Flash, etc.) and **Claude & GPT Hosted Models** (Claude Opus, Claude Sonnet, GPT-OSS).
 
 ### v1.0.13 (2026-10-31)
 - **Light & Dark Theme Parity**:

@@ -80,6 +80,28 @@ export interface ModelQuotaInfo {
   resetTime?: string;
 }
 
+export interface QuotaGroupItem {
+  remainingFraction: number;
+  remainingPercent: string;
+  resetTime?: string;
+  resetCountdown?: string;
+  description?: string;
+}
+
+export interface QuotaGroupSummary {
+  key: "gemini" | "claude" | "argon" | string;
+  displayName: string;
+  description?: string;
+  supportedModels: string[];
+  fiveHour?: QuotaGroupItem;
+  weekly?: QuotaGroupItem;
+  effectiveFraction: number;
+  effectivePercent: string;
+  isWeeklyExhausted: boolean;
+  isWeeklyConstrained: boolean;
+  is5hCooling: boolean;
+}
+
 export interface QuotaSummary {
   model: string;
   displayName: string;
@@ -92,8 +114,15 @@ export interface QuotaSummary {
   weeklyResetTime?: string;
   weeklyResetCountdown?: string;
   weeklyResetLabel?: string;
+  weeklyDescription?: string;
+  effectiveFraction?: number;
+  effectivePercent?: string;
+  isWeeklyExhausted?: boolean;
+  isWeeklyConstrained?: boolean;
+  is5hCooling?: boolean;
   tier?: string;
   maxTokens: number;
+  groups?: QuotaGroupSummary[];
 }
 
 export interface SessionQuotaSnapshot {
@@ -118,6 +147,8 @@ export type AcpActivity =
       name?: string;
       args?: string;
       isStart?: boolean;
+      isSubagent?: boolean;
+      rawArgs?: any;
     }
   | { type: "plan"; text: string }
   | { type: "usage"; usage: TokenAccounting }

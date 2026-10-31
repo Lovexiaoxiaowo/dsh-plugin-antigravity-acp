@@ -27,10 +27,13 @@ export declare class DshStreamWriter {
     private textStarted;
     private textClosed;
     private textBuffer;
+    private nextBlockIndex;
     private hasEnded;
     constructor(pushChunk: (chunk: any) => void);
+    getRecordedTextLength(): number;
     ensureReasoningOpen(): void;
     writeThinking(text: string): void;
+    writeToolCall(id: string, name: string, args: string | Record<string, any>): void;
     closeReasoningBlock(): void;
     ensureTextOpen(): void;
     writeText(text: string): void;

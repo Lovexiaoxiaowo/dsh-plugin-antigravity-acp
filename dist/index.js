@@ -301,6 +301,7 @@ export class DshAntigravityService {
         const writer = new DshStreamWriter((chunk) => {
             pushItem({ chunk });
         });
+        const hasSubagentTool = Boolean(options?.tools && Array.isArray(options.tools) && options.tools.some((t) => t?.name === "subagent" || t?.name === "subagent_fork"));
         this.notificationListeners.set(listenerKey, (notice) => {
             if (notice?.sessionId && notice.sessionId !== acpSessionId) {
                 return;
@@ -310,17 +311,31 @@ export class DshAntigravityService {
                 if (activity.type === "thought") {
                     writer.writeThinking(activity.delta);
                 }
-                else if (activity.type === "plan" || activity.type === "tool") {
-                    // Tool calls and plans in ACP are executed internally by Antigravity agent.
-                    // Stream them into reasoning/trace so they render richly without triggering DSH host-side tool dispatch.
+                else if (activity.type === "tool") {
+                    // If the model invokes subagent in ACP and DSH has subagent enabled,
+                    // bridge it directly to DSH native subagent engine!
+                    if (activity.isSubagent && activity.isStart && hasSubagentTool) {
+                        const raw = activity.rawArgs || {};
+                        const description = raw.Role || raw.description || "Subagent Delegation";
+                        const prompt = raw.Prompt || raw.prompt || activity.args || "Subagent task";
+                        writer.writeToolCall(activity.toolCallId || `sub-${Date.now()}`, "subagent", {
+                            description,
+                            prompt,
+                        });
+                        pushItem({ done: true });
+                        return;
+                    }
+                    writer.writeThinking(activity.text);
+                }
+                else if (activity.type === "plan") {
                     writer.writeThinking(activity.text);
                 }
                 else if (activity.type === "text") {
                     writer.writeText(activity.delta);
                 }
                 else if (activity.type === "usage") {
+                    // Track internally in sessionManager for quota and memory
                     this.sessionManager.recordUsage(dshSessionId, activity.usage);
-                    writer.writeUsage(activity.usage);
                 }
             }
         });
@@ -334,18 +349,22 @@ export class DshAntigravityService {
         options?.signal?.addEventListener("abort", abortHandler, { once: true });
         const handleSuccess = (response) => {
             this.sessionManager.incrementMessageCount(dshSessionId);
-            // Extract token usage from meta.quota if available
+            // Extract genuine turn-level tokens from response.usage, never letting account-wide quota override it
+            const turnUsage = response?.usage;
             const quota = response?._meta?.quota;
-            const tokens = quota?.token_count || response?.usage;
-            if (tokens) {
-                const recorded = this.sessionManager.recordUsage(dshSessionId, {
-                    inputTokens: Number(tokens.input_tokens || tokens.inputTokens || 0),
-                    outputTokens: Number(tokens.output_tokens || tokens.outputTokens || 0),
-                    reasoningTokens: Number(tokens.thought_tokens || tokens.thoughtTokens || 0),
-                    cachedTokens: Number(tokens.cached_tokens || tokens.cachedReadTokens || 0),
-                });
-                writer.writeUsage(recorded);
-            }
+            const rawTokens = (turnUsage && (turnUsage.inputTokens || turnUsage.input_tokens))
+                ? turnUsage
+                : (quota?.token_count && Number(quota.token_count.input_tokens) <= 1_000_000 ? quota.token_count : null);
+            const promptChars = typeof promptPayload === "string" ? promptPayload.length : JSON.stringify(promptPayload).length;
+            const outputChars = writer.getRecordedTextLength();
+            const finalUsage = this.sessionManager.recordUsage(dshSessionId, rawTokens ? {
+                inputTokens: Number(rawTokens.input_tokens || rawTokens.inputTokens || 0),
+                outputTokens: Number(rawTokens.output_tokens || rawTokens.outputTokens || 0),
+                reasoningTokens: Number(rawTokens.thought_tokens || rawTokens.thoughtTokens || 0),
+                cachedTokens: Number(rawTokens.cached_tokens || rawTokens.cachedReadTokens || 0),
+            } : {}, promptChars, outputChars);
+            // Emit clean turn usage chunk to DSH on completion
+            writer.writeUsage(finalUsage);
             writer.finish("stop");
             pushItem({ done: true });
         };
@@ -638,6 +657,7 @@ export function apply(ctx, config = {}) {
                                 sessionId,
                                 model,
                                 reasoningEffort,
+                                tools: options.tools,
                             });
                         },
                     });
