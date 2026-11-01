@@ -119,6 +119,17 @@ export declare class DshAntigravityService {
      */
     logout(): Promise<void>;
     /**
+     * Validates whether upstream Google account models metadata grants access to a model.
+     */
+    hasUpstreamEntitlement(modelId: string, upstreamModels: Record<string, any>): boolean;
+    /**
+     * Filters and returns only genuine actionable models compatible with ACP, account entitlements, and tier.
+     */
+    getEffectiveModels(provider?: string, options?: {
+        includeCoolingTags?: boolean;
+        filterExhausted?: boolean;
+    }): Promise<any[]>;
+    /**
      * Creates an active agent session in target directory.
      */
     createSession(cwd: string, options?: {

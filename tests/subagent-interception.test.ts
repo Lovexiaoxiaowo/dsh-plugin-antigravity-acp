@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { DshStreamWriter } from "../src/event-mapper";
+﻿import { describe, it, expect } from "vitest";
+import { DshStreamWriter, mapSessionUpdate } from "../src/event-mapper";
 
 describe("Subagent interception and multi-tool output test", () => {
   it("Lane 15: writeToolCalls emits multiple sequential tool blocks ending with finish", () => {
@@ -21,18 +21,7 @@ describe("Subagent interception and multi-tool output test", () => {
 
     writer.writeToolCalls(toolCalls);
 
-    // Block structure:
-    // call-1:
-    // 0: block-start (index: 2, tool_call)
-    // 1: tool-call-delta (index: 2, call-1)
-    // 2: block-end (index: 2)
-    // call-2:
-    // 3: block-start (index: 3, tool_call)
-    // 4: tool-call-delta (index: 3, call-2)
-    // 5: block-end (index: 3)
-    // 6: finish (kind: tool_calls)
     expect(chunks.length).toBe(7);
-
     expect(chunks[0].type).toBe("block-start");
     expect(chunks[0].index).toBe(2);
     expect(chunks[0].blockType).toBe("tool-call");
@@ -71,5 +60,50 @@ describe("Subagent interception and multi-tool output test", () => {
     expect(chunks[2].type).toBe("block-end");
     expect(chunks[3].type).toBe("finish");
     expect(chunks[3].reason.kind).toBe("tool-calls");
+  });
+
+  it("Lane 17: mapSessionUpdate recognizes Running invoke_subagent title as subagent", () => {
+    const notice: any = {
+      sessionId: "s-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-sub-1",
+        title: "Running invoke_subagent",
+        name: null,
+        arguments: {
+          Subagents: JSON.stringify([
+            { Role: "DSH-Tester", Prompt: "Verify DSH UI Subagent" }
+          ])
+        }
+      }
+    };
+
+    const activities = mapSessionUpdate(notice);
+    expect(activities.length).toBe(1);
+    expect(activities[0].type).toBe("tool");
+    expect((activities[0] as any).isSubagent).toBe(true);
+    expect((activities[0] as any).rawArgs.Subagents).toEqual([
+      { Role: "DSH-Tester", Prompt: "Verify DSH UI Subagent" }
+    ]);
+  });
+
+  it("Lane 18: mapSessionUpdate preserves normal run_command without false subagent match", () => {
+    const notice: any = {
+      sessionId: "s-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-cmd-1",
+        title: "Running run_command",
+        name: "run_command",
+        arguments: {
+          CommandLine: "echo subagent_test"
+        }
+      }
+    };
+
+    const activities = mapSessionUpdate(notice);
+    expect(activities.length).toBe(1);
+    expect(activities[0].type).toBe("tool");
+    expect((activities[0] as any).isSubagent).toBe(false);
   });
 });

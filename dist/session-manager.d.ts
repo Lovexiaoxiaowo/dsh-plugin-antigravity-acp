@@ -31,6 +31,21 @@ export declare class DshSessionManager {
      * before sending conversation history to the model, keeping the reconstructed prompt ultra-compact.
      */
     pruneAssistantHistory(text: string): string;
+    /**
+     * Parses structured conversation turns if the message contains an embedded '# Prior conversation' block.
+     * Accurately extracts historical turns and the authentic current user query.
+     */
+    parsePriorConversation(text: string): {
+        history: Array<{
+            role: "user" | "assistant";
+            text: string;
+        }>;
+        currentQuery: string;
+    } | null;
+    /**
+     * Strips harness instructions, system prompts, embedded tools/skills,
+     * router policies, and extracts the genuine user intent.
+     */
     cleanUserQuery(text: string): string;
     isSystemInjection(msg: any): boolean;
     /**
@@ -86,6 +101,25 @@ export declare class DshSessionManager {
         data: string;
         mimeType: string;
     }>>;
+    /**
+     * Attaches a concise instruction guardrail to prevent the autonomous agent
+     * from spiraling into unrequested 50+ step filesystem/command explorations for simple Q&A.
+     */
+    attachToolGuardrail(blocks: Array<{
+        type: "text";
+        text: string;
+    } | {
+        type: "image";
+        data: string;
+        mimeType: string;
+    }>): Array<{
+        type: "text";
+        text: string;
+    } | {
+        type: "image";
+        data: string;
+        mimeType: string;
+    }>;
     formatPromptWithHistory(messages: any[], isNewSession: boolean): string;
 }
 //# sourceMappingURL=session-manager.d.ts.map

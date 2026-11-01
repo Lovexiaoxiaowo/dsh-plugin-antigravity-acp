@@ -8,8 +8,13 @@ import {
   type SessionNotification,
   type InitializeResponse,
 } from "@agentclientprotocol/sdk";
+import fs from "node:fs";
+import path from "node:path";
 import { Readable, Writable } from "node:stream";
-import type { PermissionMode, ReasoningEffort } from "./types.js";
+import type { PermissionMode, ReasoningEffort, ModelOption } from "./types.js";
+import { getAntigravityModelsCachePath } from "./auth.js";
+
+export type AcpModelOption = ModelOption;
 
 export interface AcpClientEventHandlers {
   onNotification?: (notification: SessionNotification) => void;
@@ -33,18 +38,19 @@ export function openUrlInBrowser(url: string): void {
 }
 
 export class AntigravityAcpClient {
-
-
   private childProcess: ChildProcess | null = null;
   private connection: ClientSideConnection | null = null;
   private currentSessionId: string | null = null;
-
+  private cachedConfigModels: AcpModelOption[] | null = null;
   private isPaused = false;
+
   constructor(
     private readonly serverBinaryPath: string,
     private readonly defaultArgs: string[] = [],
     private readonly handlers: AcpClientEventHandlers = {}
-  ) {}
+  ) {
+    this.cachedConfigModels = this.loadPersistedModelsCache();
+  }
 
   /**
    * Spawns the official agy_acp_server and establishes the JSON-RPC stdio connection.
@@ -147,6 +153,7 @@ export class AntigravityAcpClient {
     });
 
     this.currentSessionId = res.sessionId;
+    this.extractAndCacheConfigOptions(res.configOptions);
 
     // Configure permission mode via standard setSessionMode / legacy setMode
     const mode = options?.permissionMode || "yolo";
@@ -168,19 +175,17 @@ export class AntigravityAcpClient {
 
     // Configure model via standard setSessionConfigOption / legacy setModel
     if (options?.model) {
-      // Normalize model ID to official Antigravity binary ID
-      const targetModel = options.model === "claude-opus-4-6-thinking" ? "claude-opus-4-6" : options.model;
       try {
         if (typeof this.connection.setSessionConfigOption === "function") {
           await this.connection.setSessionConfigOption({
             sessionId: res.sessionId,
             configId: "model",
-            value: targetModel,
+            value: options.model,
           });
         } else if (typeof (this.connection as any).setModel === "function") {
           await (this.connection as any).setModel({
             sessionId: res.sessionId,
-            modelId: targetModel,
+            modelId: options.model,
           });
         }
       } catch (err) {
@@ -212,14 +217,138 @@ export class AntigravityAcpClient {
     if (!this.connection) return false;
     try {
       if (typeof this.connection.resumeSession === "function") {
-        await this.connection.resumeSession({ sessionId, cwd, mcpServers: [] });
+        const res: any = await this.connection.resumeSession({ sessionId, cwd, mcpServers: [] });
         this.currentSessionId = sessionId;
+        if (res?.configOptions) {
+          this.extractAndCacheConfigOptions(res.configOptions);
+        }
         return true;
       }
     } catch {
       // Fallback
     }
     return false;
+  }
+
+  /**
+   * Extracts model options from ACP SessionConfigOption array and updates cache.
+   */
+  public extractAndCacheConfigOptions(configOptions?: Array<any> | null): AcpModelOption[] {
+    if (!Array.isArray(configOptions)) return this.cachedConfigModels || [];
+
+    const modelOption = configOptions.find(
+      (opt) => opt && (opt.id === "model" || opt.category === "model")
+    );
+    if (!modelOption || !Array.isArray(modelOption.options)) {
+      return this.cachedConfigModels || [];
+    }
+
+    const models: AcpModelOption[] = [];
+    const collectFromOptions = (opts: any[]) => {
+      for (const item of opts) {
+        if (!item) continue;
+        if (Array.isArray(item.options)) {
+          collectFromOptions(item.options);
+        } else if (item.value || item.id) {
+          models.push({
+            id: String(item.value || item.id),
+            name: String(item.name || item.value || item.id),
+            description: item.description || undefined,
+          });
+        }
+      }
+    };
+
+    collectFromOptions(modelOption.options);
+
+    if (models.length > 0) {
+      this.cachedConfigModels = models;
+      this.persistModelsCache(models);
+    }
+    return models;
+  }
+
+  /**
+   * Returns in-memory or persisted ACP supported models.
+   */
+  public getConfigModels(): AcpModelOption[] | null {
+    if (!this.cachedConfigModels || this.cachedConfigModels.length === 0) {
+      this.cachedConfigModels = this.loadPersistedModelsCache();
+    }
+    return this.cachedConfigModels;
+  }
+
+  /**
+   * Probes supported models by initializing a transient ACP session.
+   * Safe to call asynchronously in background; never throws fatal error.
+   */
+  public async probeSupportedModels(cwd: string = process.cwd()): Promise<AcpModelOption[]> {
+    if (this.cachedConfigModels && this.cachedConfigModels.length > 0) {
+      return this.cachedConfigModels;
+    }
+
+    if (!this.connection) {
+      const diskCached = this.loadPersistedModelsCache();
+      if (diskCached && diskCached.length > 0) {
+        this.cachedConfigModels = diskCached;
+        return diskCached;
+      }
+      return [];
+    }
+
+    try {
+      const res = await this.connection.newSession({
+        cwd,
+        mcpServers: [],
+      });
+      const extracted = this.extractAndCacheConfigOptions(res.configOptions);
+      try {
+        if (typeof (this.connection as any).closeSession === "function") {
+          await (this.connection as any).closeSession({ sessionId: res.sessionId });
+        } else if (typeof this.connection.cancel === "function") {
+          await this.connection.cancel({ sessionId: res.sessionId });
+        }
+      } catch {
+        // Safe probe session cleanup ignore
+      }
+      return extracted;
+    } catch (err) {
+      console.warn("[antigravity-acp] probeSupportedModels skipped:", err);
+      return this.cachedConfigModels || this.loadPersistedModelsCache() || [];
+    }
+  }
+
+  private loadPersistedModelsCache(): AcpModelOption[] | null {
+    try {
+      const cachePath = getAntigravityModelsCachePath();
+      if (fs.existsSync(cachePath)) {
+        const raw = fs.readFileSync(cachePath, "utf-8");
+        const json = JSON.parse(raw);
+        if (Array.isArray(json?.models) && json.models.length > 0) {
+          return json.models;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  private persistModelsCache(models: AcpModelOption[]): void {
+    try {
+      const cachePath = getAntigravityModelsCachePath();
+      const dir = path.dirname(cachePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(
+        cachePath,
+        JSON.stringify({ models, updatedAt: Date.now() }, null, 2),
+        "utf-8"
+      );
+    } catch (err) {
+      console.warn("[antigravity-acp] failed to persist acp models cache:", err);
+    }
   }
 
   /**

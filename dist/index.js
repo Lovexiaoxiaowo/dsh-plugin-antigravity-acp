@@ -65,14 +65,6 @@ export const KNOWN_ANTIGRAVITY_MODELS = [
         supportsThinking: false,
     },
     {
-        id: "claude-opus-4-6",
-        name: "Claude Opus 4.6",
-        description: "Google 托管 Claude Opus 深度思考与架构模型",
-        contextWindow: 200_000,
-        defaultMaxTokens: 32_768,
-        supportsThinking: true,
-    },
-    {
         id: "claude-opus-4-6-thinking",
         name: "Claude Opus 4.6 Thinking",
         description: "Google 托管 Claude Opus 深度思考与架构模型",
@@ -382,6 +374,134 @@ export class DshAntigravityService {
         this.onAuthChange?.();
     }
     /**
+     * Validates whether upstream Google account models metadata grants access to a model.
+     */
+    hasUpstreamEntitlement(modelId, upstreamModels) {
+        if (!upstreamModels || Object.keys(upstreamModels).length === 0) {
+            return true;
+        }
+        const norm = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const targetNorm = norm(modelId);
+        // 1. Direct key match or common suffixes (-tiered, -thinking)
+        if (upstreamModels[modelId] ||
+            upstreamModels[`${modelId}-tiered`] ||
+            upstreamModels[`${modelId}-thinking`]) {
+            return true;
+        }
+        // 2. Scan keys for normalized match
+        for (const key of Object.keys(upstreamModels)) {
+            const keyNorm = norm(key);
+            if (keyNorm === targetNorm || keyNorm.startsWith(targetNorm) || targetNorm.startsWith(keyNorm)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /**
+     * Filters and returns only genuine actionable models compatible with ACP, account entitlements, and tier.
+     */
+    async getEffectiveModels(provider = "google-antigravity", options) {
+        let baseCandidates = [];
+        // 1. Probe or fetch ACP introspection models
+        let acpModels = this.client?.getConfigModels();
+        if ((!acpModels || acpModels.length === 0) && this.client) {
+            try {
+                acpModels = await this.client.probeSupportedModels();
+            }
+            catch {
+                // probe non-fatal
+            }
+        }
+        if (acpModels && acpModels.length > 0) {
+            baseCandidates = acpModels.map((am) => {
+                const meta = KNOWN_ANTIGRAVITY_MODELS.find((km) => km.id.toLowerCase() === am.id.toLowerCase());
+                return {
+                    id: am.id,
+                    name: am.name || meta?.name || am.id,
+                    description: am.description || meta?.description || "Google Antigravity Agent 模型",
+                    contextWindow: meta?.contextWindow || 1_048_576,
+                    defaultMaxTokens: meta?.defaultMaxTokens || 65_536,
+                    supportsThinking: meta ? meta.supportsThinking : true,
+                };
+            });
+        }
+        else {
+            baseCandidates = [...KNOWN_ANTIGRAVITY_MODELS];
+        }
+        // 2. Refresh upstream quota & tier data if logged in
+        if (this.isLoggedIn()) {
+            try {
+                await this.quotaService.refreshIfNeeded();
+            }
+            catch {
+                // network / quota refresh non-fatal
+            }
+        }
+        const upstreamModels = this.quotaService.getCachedModelsData();
+        const isFree = this.quotaService.isFreeTier();
+        const effectiveList = [];
+        const seenIds = new Set();
+        for (const m of baseCandidates) {
+            const modelId = m.id.toLowerCase();
+            if (seenIds.has(modelId))
+                continue;
+            // Rule 1: Exclude non-agent completion, embedding, and chat models
+            if (modelId.startsWith("tab_") ||
+                modelId.startsWith("chat_") ||
+                modelId.startsWith("embed_") ||
+                modelId.includes("embedding")) {
+                continue;
+            }
+            // Rule 2: Exclude 3P models on free tier
+            if (isFree && (modelId.includes("claude") || modelId.includes("gpt-oss") || modelId.includes("gpt_oss"))) {
+                continue;
+            }
+            // Rule 3: Check upstream account model entitlement
+            if (upstreamModels && Object.keys(upstreamModels).length > 0) {
+                if (!this.hasUpstreamEntitlement(modelId, upstreamModels)) {
+                    continue;
+                }
+            }
+            const quotaState = this.quotaService.getModelQuotaState(m.id);
+            // Optional: filter out fully exhausted models if requested
+            if (options?.filterExhausted && quotaState?.isWeeklyExhausted) {
+                continue;
+            }
+            seenIds.add(modelId);
+            let displayName = `${m.name} (Antigravity)`;
+            if (options?.includeCoolingTags !== false && quotaState) {
+                if (quotaState.isWeeklyExhausted) {
+                    displayName += " [周额度已耗尽]";
+                }
+                else if (quotaState.is5hCooling && quotaState.resetCountdown) {
+                    displayName += ` [5h冷却中 ${quotaState.resetCountdown}]`;
+                }
+            }
+            effectiveList.push({
+                id: m.id,
+                name: displayName,
+                description: m.description,
+                provider,
+                inputModalities: ["text", "image"],
+                context: {
+                    contextWindow: m.contextWindow || 1_048_576,
+                },
+                defaultMaxTokens: m.defaultMaxTokens || 65_536,
+                reasoning: m.supportsThinking
+                    ? {
+                        efforts: [
+                            { id: "low", name: "Low" },
+                            { id: "medium", name: "Medium" },
+                            { id: "high", name: "High" },
+                        ],
+                        defaultEffort: "high",
+                    }
+                    : undefined,
+            });
+        }
+        return effectiveList;
+    }
+    /**
      * Creates an active agent session in target directory.
      */
     async createSession(cwd, options) {
@@ -390,11 +510,26 @@ export class DshAntigravityService {
         }
         if (!this.client)
             throw new Error("Failed to initialize Antigravity client");
-        return await this.client.createSession(cwd, {
-            permissionMode: options?.permissionMode || this.config.permissionMode || "yolo",
-            model: options?.model || this.config.defaultModel || "gemini-3.8-flash",
-            reasoningEffort: options?.reasoningEffort || this.config.reasoningEffort || "high",
-        });
+        const requestedModel = options?.model || this.config.defaultModel || "gemini-3.8-flash";
+        try {
+            return await this.client.createSession(cwd, {
+                permissionMode: options?.permissionMode || this.config.permissionMode || "yolo",
+                model: requestedModel,
+                reasoningEffort: options?.reasoningEffort || this.config.reasoningEffort || "high",
+            });
+        }
+        catch (err) {
+            const fallbackModel = "gemini-3.8-flash";
+            if (requestedModel !== fallbackModel) {
+                console.warn(`[antigravity-acp] Failed to create session with model "${requestedModel}". Falling back to "${fallbackModel}"...`, err);
+                return await this.client.createSession(cwd, {
+                    permissionMode: options?.permissionMode || this.config.permissionMode || "yolo",
+                    model: fallbackModel,
+                    reasoningEffort: options?.reasoningEffort || this.config.reasoningEffort || "high",
+                });
+            }
+            throw err;
+        }
     }
     /**
      * Sends prompt to session.
@@ -466,14 +601,20 @@ export class DshAntigravityService {
             }
             // Format prompt preserving multimodal blocks and history if session was recreated/new
             let promptPayload = "";
+            const toolGuardrailText = "\n\n[Instruction]: Answer directly and concisely based on context and knowledge. Do NOT perform unsolicited multi-step filesystem scans or command explorations unless explicitly requested by the user.";
             if (typeof input === "string") {
-                promptPayload = input;
+                const cleaned = this.sessionManager.cleanUserQuery(input);
+                const base = cleaned || input;
+                promptPayload = base + toolGuardrailText;
             }
             else if (Array.isArray(input)) {
                 promptPayload = await this.sessionManager.preparePromptPayload(input, isNewSession, this.resolveAttachment.bind(this));
             }
             else {
-                promptPayload = String(input);
+                const raw = String(input);
+                const cleaned = this.sessionManager.cleanUserQuery(raw);
+                const base = cleaned || raw;
+                promptPayload = base + toolGuardrailText;
             }
             const listenerKey = `stream-${Date.now()}-${Math.random()}`;
             const stepTracker = new AcpStepTracker();
@@ -646,13 +787,16 @@ export class DshAntigravityService {
                             console.log(`[antigravity-acp] Retrying with fresh session ${currentAcpSessionId}...`);
                             let retryPayload;
                             if (typeof input === "string") {
-                                retryPayload = input;
+                                const cleaned = this.sessionManager.cleanUserQuery(input);
+                                retryPayload = cleaned || input;
                             }
                             else if (Array.isArray(input)) {
                                 retryPayload = await this.sessionManager.preparePromptPayload(input, true, this.resolveAttachment.bind(this));
                             }
                             else {
-                                retryPayload = String(input);
+                                const raw = String(input);
+                                const cleaned = this.sessionManager.cleanUserQuery(raw);
+                                retryPayload = cleaned || raw;
                             }
                             const retryResponse = await this.prompt(currentAcpSessionId, retryPayload);
                             handleSuccess(retryResponse);
@@ -766,7 +910,8 @@ export class DshAntigravityService {
             });
             try {
                 const timeoutMs = options?.timeoutMs || 300_000;
-                const promptPromise = this.prompt(sessionId, prompt);
+                const cleanedPrompt = this.sessionManager.cleanUserQuery(prompt) || prompt;
+                const promptPromise = this.prompt(sessionId, cleanedPrompt);
                 const timeoutPromise = new Promise((_, reject) => {
                     const t = setTimeout(() => {
                         clearTimeout(t);
@@ -870,6 +1015,11 @@ export function apply(ctx, config = {}) {
                                 const model = url.searchParams.get("model") || undefined;
                                 const snapshot = await service.getQuotaSnapshot(sessionId, model);
                                 send(200, snapshot);
+                                return;
+                            }
+                            if (pathname === "/antigravity/models") {
+                                const models = await service.getEffectiveModels("google-antigravity");
+                                send(200, { models });
                                 return;
                             }
                             if (pathname === "/antigravity/login") {
@@ -1006,39 +1156,16 @@ export function apply(ctx, config = {}) {
                             return undefined;
                         },
                         async listModels(provider) {
-                            const dynamicModels = [];
-                            const upstreamModels = service.quotaService?.cachedModelsData;
-                            const seenIds = new Set();
-                            for (const m of KNOWN_ANTIGRAVITY_MODELS) {
-                                seenIds.add(m.id);
-                                dynamicModels.push({
-                                    id: m.id,
-                                    name: `${m.name} (Antigravity)`,
-                                    description: m.description,
-                                    provider,
-                                    inputModalities: ["text", "image"],
-                                });
-                            }
-                            if (upstreamModels && typeof upstreamModels === "object") {
-                                for (const [key, val] of Object.entries(upstreamModels)) {
-                                    const normId = key.toLowerCase();
-                                    if (!seenIds.has(normId) && !normId.startsWith("tab_") && !normId.startsWith("chat_")) {
-                                        seenIds.add(normId);
-                                        dynamicModels.push({
-                                            id: normId,
-                                            name: `${val?.displayName || normId} (Antigravity)`,
-                                            description: "Google Antigravity upstream model",
-                                            provider,
-                                            inputModalities: ["text", "image"],
-                                        });
-                                    }
-                                }
-                            }
-                            return dynamicModels;
+                            return await service.getEffectiveModels(provider);
                         },
-                        resolveModel(provider, model) {
+                        async resolveModel(provider, model) {
                             const targetId = model || "gemini-3.8-flash";
-                            const meta = KNOWN_ANTIGRAVITY_MODELS.find(m => m.id.toLowerCase() === targetId.toLowerCase()) || {
+                            const effectiveModels = await service.getEffectiveModels(provider, { includeCoolingTags: false });
+                            const found = effectiveModels.find((m) => m.id.toLowerCase() === targetId.toLowerCase());
+                            if (found) {
+                                return found;
+                            }
+                            const meta = KNOWN_ANTIGRAVITY_MODELS.find((m) => m.id.toLowerCase() === targetId.toLowerCase()) || {
                                 id: targetId,
                                 name: targetId,
                                 description: "Google Antigravity model",
@@ -1046,7 +1173,7 @@ export function apply(ctx, config = {}) {
                                 defaultMaxTokens: 65_536,
                                 supportsThinking: true,
                             };
-                            return Promise.resolve({
+                            return {
                                 id: targetId,
                                 name: `${meta.name} (Antigravity)`,
                                 description: meta.description,
@@ -1056,15 +1183,17 @@ export function apply(ctx, config = {}) {
                                     contextWindow: meta.contextWindow,
                                 },
                                 defaultMaxTokens: meta.defaultMaxTokens || 65_536,
-                                reasoning: meta.supportsThinking ? {
-                                    efforts: [
-                                        { id: "low", name: "Low" },
-                                        { id: "medium", name: "Medium" },
-                                        { id: "high", name: "High" },
-                                    ],
-                                    defaultEffort: "high",
-                                } : undefined,
-                            });
+                                reasoning: meta.supportsThinking
+                                    ? {
+                                        efforts: [
+                                            { id: "low", name: "Low" },
+                                            { id: "medium", name: "Medium" },
+                                            { id: "high", name: "High" },
+                                        ],
+                                        defaultEffort: "high",
+                                    }
+                                    : undefined,
+                            };
                         },
                         async prepareCall(provider, model, signal) {
                             const resolved = await this.resolveModel(provider, model, signal);

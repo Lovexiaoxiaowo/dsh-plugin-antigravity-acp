@@ -4,6 +4,11 @@
  */
 export declare function getAntigravityTokenPath(): string;
 /**
+ * Returns standard cache file path for Antigravity supported models:
+ * ~/.gemini/antigravity-acp/acp_models_cache.json
+ */
+export declare function getAntigravityModelsCachePath(): string;
+/**
  * Checks whether user has valid local Antigravity OAuth credentials.
  */
 export declare function hasLocalCredentials(): boolean;

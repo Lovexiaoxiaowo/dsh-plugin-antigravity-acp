@@ -1,13 +1,6 @@
 import { DshSessionManager } from "./session-manager.js";
 import type { SessionQuotaSnapshot } from "./types.js";
 export declare function formatFractionPercent(fraction: number): string;
-export declare function formatIntegerPercent(fraction: number): number;
-export declare function formatCompactCountdown(resetTimeStr?: string): string;
-/**
- * Reads local Antigravity-Manager account configuration & ground truth quota data
- * from ~/.antigravity_tools/accounts/*.json if present on host.
- */
-export declare function getAntigravityToolsAccount(): any | null;
 export declare class AntigravityQuotaService {
     private readonly sessionManager;
     private readonly customEndpoints?;
@@ -33,5 +26,17 @@ export declare class AntigravityQuotaService {
     private formatWeeklyCountdown;
     private formatResetDate;
     getSnapshot(sessionId?: string, modelId?: string): Promise<SessionQuotaSnapshot>;
+    getCachedModelsData(): any;
+    getCachedTierData(): any;
+    getCachedSummaryData(): any;
+    isFreeTier(): boolean;
+    refreshIfNeeded(): Promise<void>;
+    getModelQuotaState(modelId: string): {
+        isWeeklyExhausted: boolean;
+        isWeeklyConstrained: boolean;
+        is5hCooling: boolean;
+        resetCountdown?: string;
+        effectiveFraction: number;
+    } | null;
 }
 //# sourceMappingURL=quota-service.d.ts.map

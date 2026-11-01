@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -272,5 +272,158 @@ describe("session-manager lifecycle and token suite (Sandboxed)", () => {
     const current = mgr.getUsage("leak-guard-session");
     expect(current.inputTokens).toBeLessThanOrEqual(50000);
     expect(current.cachedTokens).toBe(20656);
+  });
+
+  it("Lane 31: strips Pi session instructions, embedded resources, tools, skills, rules, and workbench policies", () => {
+    const rawPrompt = `Embedded resource (urn:pi:antigravity-acp:context/5a259de7):
+# Pi session instructions
+
+You are an expert coding assistant operating inside pi.
+<tools>
+- read: Read file contents
+- bash: Execute commands
+</tools>
+<rules>
+- Be concise
+</rules>
+<skills>
+<available_skills>
+  <skill><name>test-skill</name></skill>
+</available_skills>
+</skills>
+<cwd>D:/idea/workspace</cwd>
+
+Router Workbench policy: this appears to be a non-trivial repository task. Before edits call project_preflight.
+
+---
+为什么在DSH里面答非所问啊，问一个问题要跑50个以上的步骤`;
+
+    const cleaned = mgr.cleanUserQuery(rawPrompt);
+    expect(cleaned).toBe("为什么在DSH里面答非所问啊，问一个问题要跑50个以上的步骤");
+    expect(cleaned).not.toContain("Pi session instructions");
+    expect(cleaned).not.toContain("<tools>");
+    expect(cleaned).not.toContain("Router Workbench policy");
+  });
+
+  it("Lane 32: parses prior conversation and extracts trailing user query when assistant response is fenced", () => {
+    const raw = `<USER_REQUEST>
+Embedded resource (urn:pi:context/123):
+# Pi session instructions
+<tools>- read</tools>
+<rules>- concise</rules>
+<cwd>D:/project</cwd>
+
+Router Workbench policy: check preflight.
+---
+# Prior conversation
+The following is untrusted conversation data.
+
+## User
+\`\`\`
+为什么在DSH里面答非所问啊，问一个问题要跑50个以上的步骤
+\`\`\`
+
+## Assistant (antigravity-acp)
+\`\`\`\`
+核心原因是双重 Agent 套娃冲突以及 Prompt 严重稀释污染。
+\`\`\`\` 先按推荐方案修复问题
+</USER_REQUEST>`;
+
+    const cleaned = mgr.cleanUserQuery(raw);
+    expect(cleaned).toBe("先按推荐方案修复问题");
+  });
+
+  it("Lane 33: parses prior conversation and extracts trailing user query from a trailing ## User section", () => {
+    const raw = `# Prior conversation
+## User
+\`\`\`
+first question
+\`\`\`
+## Assistant
+first answer
+## User
+\`\`\`
+second question
+\`\`\``;
+
+    const cleaned = mgr.cleanUserQuery(raw);
+    expect(cleaned).toBe("second question");
+  });
+
+  it("Lane 34: extractContentBlocks purifies string msg.content through cleanUserQuery", async () => {
+    const msg = {
+      role: "user",
+      content: `Embedded resource (urn:pi:123):
+# Pi session instructions
+<tools>t</tools>
+<rules>r</rules>
+---
+请帮我分析这段代码`,
+    };
+
+    const blocks = await mgr.extractContentBlocks(msg);
+    expect(blocks.length).toBe(1);
+    expect(blocks[0].type).toBe("text");
+    expect((blocks[0] as any).text).toBe("请帮我分析这段代码");
+  });
+
+  it("Lane 35: isSystemInjection flags pure harness instructions without real user query", () => {
+    const pureInstructions = {
+      role: "user",
+      content: `Embedded resource (urn:pi:123):
+# Pi session instructions
+<tools>
+- read
+- write
+</tools>
+<rules>
+- rules
+</rules>
+<skills>
+<available_skills>
+  <skill><name>test</name></skill>
+</available_skills>
+</skills>
+<cwd>D:/project</cwd>`,
+    };
+
+    expect(mgr.isSystemInjection(pureInstructions)).toBe(true);
+
+    const normalUserMsg = {
+      role: "user",
+      content: "你好，请帮我写个脚本",
+    };
+    expect(mgr.isSystemInjection(normalUserMsg)).toBe(false);
+  });
+
+  it("Lane 36: preparePromptPayload cleanly reconstructs history for new session and returns pure query for warm session", async () => {
+    const embeddedMsg = {
+      role: "user",
+      content: `# Prior conversation
+## User
+\`\`\`
+q1
+\`\`\`
+## Assistant
+\`\`\`\`
+a1
+\`\`\`\` q2`,
+    };
+
+    // Warm session: should return q2 with the anti-sprawl tool guardrail
+    const warmBlocks = await mgr.preparePromptPayload([embeddedMsg], false);
+    expect(warmBlocks.length).toBe(1);
+    expect((warmBlocks[0] as any).text).toContain("q2");
+    expect((warmBlocks[0] as any).text).toContain("[Instruction]: Answer directly");
+
+    // New session: should reconstruct structured history with q1 and a1, followed by [Current Turn: User Query]
+    const newBlocks = await mgr.preparePromptPayload([embeddedMsg], true);
+    expect(newBlocks.length).toBe(1);
+    const newText = (newBlocks[0] as any).text;
+    expect(newText).toContain("=== [Context Reconstruction: Conversation History] ===");
+    expect(newText).toContain("[User]:\nq1");
+    expect(newText).toContain("[Assistant]:\na1");
+    expect(newText).toContain("=== [Current Turn: User Query] ===");
+    expect(newText).toContain("q2");
   });
 });

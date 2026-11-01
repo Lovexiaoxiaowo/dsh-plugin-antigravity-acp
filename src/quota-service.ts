@@ -1,9 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { getFreshAccessToken } from "./auth.js";
 import { DshSessionManager } from "./session-manager.js";
-import type { SessionQuotaSnapshot, QuotaSummary, QuotaGroupSummary, QuotaGroupItem, QuotaCardItem } from "./types.js";
+import type { SessionQuotaSnapshot, QuotaSummary, QuotaGroupSummary, QuotaGroupItem } from "./types.js";
 
 const DEFAULT_MAX_TOKENS = 1_000_000; // 1M tokens for Gemini 3.x models
 
@@ -32,58 +29,9 @@ export function formatFractionPercent(fraction: number): string {
   const p = fraction * 100;
   // If slightly consumed, do not round up to 100.0% to avoid illusion of non-responsive quota
   if (p > 99.0 && p < 100.0) {
-    const f = Math.min(99.9, Number(p.toFixed(1))).toFixed(1);
-    return `${f}%`;
+    const f = p.toFixed(2); return `${f === "100.00" ? "99.99" : f}%`;
   }
   return `${p.toFixed(1)}%`;
-}
-
-export function formatIntegerPercent(fraction: number): number {
-  if (fraction >= 1) return 100;
-  if (fraction <= 0) return 0;
-  const p = fraction * 100;
-  if (p > 99.0 && p < 100.0) return 99;
-  return Math.round(p);
-}
-
-export function formatCompactCountdown(resetTimeStr?: string): string {
-  if (!resetTimeStr) return "计算中";
-  const target = new Date(resetTimeStr).getTime();
-  const diff = target - Date.now();
-  if (diff <= 0) return "已重置";
-
-  const totalMins = Math.floor(diff / (1000 * 60));
-  const days = Math.floor(totalMins / (60 * 24));
-  const hours = Math.floor((totalMins % (60 * 24)) / 60);
-  const mins = totalMins % 60;
-
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-  if (hours > 0) {
-    return `${hours}h ${mins}m`;
-  }
-  return `${mins}m`;
-}
-
-/**
- * Reads local Antigravity-Manager account configuration & ground truth quota data
- * from ~/.antigravity_tools/accounts/*.json if present on host.
- */
-export function getAntigravityToolsAccount(): any | null {
-  try {
-    const toolsDir = path.join(os.homedir(), ".antigravity_tools");
-    const accountsJsonPath = path.join(toolsDir, "accounts.json");
-    if (!fs.existsSync(accountsJsonPath)) return null;
-    const meta = JSON.parse(fs.readFileSync(accountsJsonPath, "utf-8"));
-    const accountId = meta.current_account_id;
-    if (!accountId) return null;
-    const accountFilePath = path.join(toolsDir, "accounts", `${accountId}.json`);
-    if (!fs.existsSync(accountFilePath)) return null;
-    return JSON.parse(fs.readFileSync(accountFilePath, "utf-8"));
-  } catch {
-    return null;
-  }
 }
 
 export class AntigravityQuotaService {
@@ -270,26 +218,6 @@ export class AntigravityQuotaService {
   async getSnapshot(sessionId?: string, modelId: string = "gemini-3.8-flash"): Promise<SessionQuotaSnapshot> {
     await this.fetchUpstreamData();
 
-    // Ground truth sync with local Antigravity-Manager accounts database if available
-    const mgrAccount = getAntigravityToolsAccount();
-    const mgrGroups: any[] = mgrAccount?.quota?.quota_groups || [];
-
-    const mgrGeminiGroup = mgrGroups.find((g: any) => /gemini/i.test(g.display_name || g.displayName || ""));
-    const mgrGemini5h = mgrGeminiGroup?.buckets?.find((b: any) =>
-      /5h|hour/i.test(`${b.bucket_id || b.bucketId || ""} ${b.window || ""}`)
-    );
-    const mgrGeminiWeekly = mgrGeminiGroup?.buckets?.find((b: any) =>
-      /week|7d/i.test(`${b.bucket_id || b.bucketId || ""} ${b.window || ""}`)
-    );
-
-    const mgr3pGroup = mgrGroups.find((g: any) => /claude|gpt|3p/i.test(g.display_name || g.displayName || ""));
-    const mgr3p5h = mgr3pGroup?.buckets?.find((b: any) =>
-      /5h|hour/i.test(`${b.bucket_id || b.bucketId || ""} ${b.window || ""}`)
-    );
-    const mgr3pWeekly = mgr3pGroup?.buckets?.find((b: any) =>
-      /week|7d/i.test(`${b.bucket_id || b.bucketId || ""} ${b.window || ""}`)
-    );
-
     const models = this.cachedModelsData || {};
     const normalizedTarget = modelId.toLowerCase().replace(/[^a-z0-9]/g, "");
     let modelEntry =
@@ -322,7 +250,7 @@ export class AntigravityQuotaService {
     const tierName =
       this.cachedTierData?.paidTier?.name ||
       this.cachedTierData?.currentTier?.name ||
-      (mgrAccount?.quota?.subscription_tier ? `Google AI ${mgrAccount.quota.subscription_tier}` : "Google AI Pro");
+      "Google AI";
 
     // 2. Parse Grouped Quotas from retrieveUserQuotaSummary
     const summaryGroups = this.cachedSummaryData?.groups || [];
@@ -342,7 +270,7 @@ export class AntigravityQuotaService {
     // Find Gemini Group if explicitly present in summary
     const geminiGroupFromSummary = summaryGroups.find((g: any) => {
       const name = (g.displayName || "").toLowerCase();
-      return name.includes("gemini") || (!name.includes("claude") && !name.includes("gpt") && !name.includes("3p"));
+      return !name.includes("claude") && !name.includes("gpt") && (name.includes("gemini") || !name.includes("3p"));
     });
     const summaryGemini5hBucket = geminiGroupFromSummary?.buckets?.find((b: any) =>
       /5h|hour/i.test(`${b.window || ""} ${b.bucketId || ""}`)
@@ -351,72 +279,45 @@ export class AntigravityQuotaService {
       /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`)
     );
 
-    // Gemini 5h quota from model, summary, or Antigravity-Manager ground truth
+    // Global/Account Weekly Bucket fallback (weekly capacity across all groups)
+    const anyWeeklyBucket =
+      summaryGeminiWeeklyBucket ||
+      tpWeeklyBucket ||
+      summaryGroups
+        .flatMap((g: any) => g.buckets || [])
+        .find((b: any) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+
+    // Gemini 5h quota from model or summary
     const geminiModelQuotaInfo = modelEntry?.quotaInfo;
     const gemini5hFraction =
       typeof geminiModelQuotaInfo?.remainingFraction === "number"
         ? geminiModelQuotaInfo.remainingFraction
         : typeof summaryGemini5hBucket?.remainingFraction === "number"
         ? summaryGemini5hBucket.remainingFraction
-        : typeof mgrGemini5h?.remaining_fraction === "number"
-        ? mgrGemini5h.remaining_fraction
-        : typeof mgrGemini5h?.remainingFraction === "number"
-        ? mgrGemini5h.remainingFraction
         : 1.0;
-    const gemini5hReset =
-      geminiModelQuotaInfo?.resetTime ||
-      summaryGemini5hBucket?.resetTime ||
-      mgrGemini5h?.reset_time ||
-      mgrGemini5h?.resetTime;
+    const gemini5hReset = geminiModelQuotaInfo?.resetTime || summaryGemini5hBucket?.resetTime;
 
-    // Gemini Weekly quota: NEVER fall back to Claude's weekly bucket!
+    // Gemini Weekly quota
     const geminiWeeklyFraction =
       typeof summaryGeminiWeeklyBucket?.remainingFraction === "number"
         ? summaryGeminiWeeklyBucket.remainingFraction
-        : typeof mgrGeminiWeekly?.remaining_fraction === "number"
-        ? mgrGeminiWeekly.remaining_fraction
-        : typeof mgrGeminiWeekly?.remainingFraction === "number"
-        ? mgrGeminiWeekly.remainingFraction
+        : typeof anyWeeklyBucket?.remainingFraction === "number"
+        ? anyWeeklyBucket.remainingFraction
         : 1.0;
-    const geminiWeeklyReset =
-      summaryGeminiWeeklyBucket?.resetTime ||
-      mgrGeminiWeekly?.reset_time ||
-      mgrGeminiWeekly?.resetTime;
-    const geminiWeeklyDesc =
-      summaryGeminiWeeklyBucket?.description ||
-      mgrGeminiWeekly?.description ||
-      "7天自然周算力上限";
+    const geminiWeeklyReset = summaryGeminiWeeklyBucket?.resetTime || anyWeeklyBucket?.resetTime;
+    const geminiWeeklyDesc = summaryGeminiWeeklyBucket?.description || anyWeeklyBucket?.description;
 
     // Claude & GPT 5h & Weekly
-    const tp5hFraction =
-      typeof tp5hBucket?.remainingFraction === "number"
-        ? tp5hBucket.remainingFraction
-        : typeof mgr3p5h?.remaining_fraction === "number"
-        ? mgr3p5h.remaining_fraction
-        : typeof mgr3p5h?.remainingFraction === "number"
-        ? mgr3p5h.remainingFraction
-        : 1.0;
-    const tp5hReset =
-      tp5hBucket?.resetTime ||
-      mgr3p5h?.reset_time ||
-      mgr3p5h?.resetTime;
-
+    const tp5hFraction = typeof tp5hBucket?.remainingFraction === "number" ? tp5hBucket.remainingFraction : 1.0;
+    const tp5hReset = tp5hBucket?.resetTime;
     const tpWeeklyFraction =
       typeof tpWeeklyBucket?.remainingFraction === "number"
         ? tpWeeklyBucket.remainingFraction
-        : typeof mgr3pWeekly?.remaining_fraction === "number"
-        ? mgr3pWeekly.remaining_fraction
-        : typeof mgr3pWeekly?.remainingFraction === "number"
-        ? mgr3pWeekly.remainingFraction
+        : typeof anyWeeklyBucket?.remainingFraction === "number"
+        ? anyWeeklyBucket.remainingFraction
         : 1.0;
-    const tpWeeklyReset =
-      tpWeeklyBucket?.resetTime ||
-      mgr3pWeekly?.reset_time ||
-      mgr3pWeekly?.resetTime;
-    const tpWeeklyDesc =
-      tpWeeklyBucket?.description ||
-      mgr3pWeekly?.description ||
-      "Claude & GPT 托管模型周配额";
+    const tpWeeklyReset = tpWeeklyBucket?.resetTime || anyWeeklyBucket?.resetTime;
+    const tpWeeklyDesc = tpWeeklyBucket?.description || anyWeeklyBucket?.description;
 
     // 3. Constrained Quota (Wood Barrel Short-board Logic) for Active Model
     const isWeeklyExhausted = geminiWeeklyFraction <= 0.001;
@@ -426,60 +327,6 @@ export class AntigravityQuotaService {
     const effectivePercent = formatFractionPercent(effectiveFraction);
 
     const maxContextTokens = Number(modelEntry?.maxTokens || DEFAULT_MAX_TOKENS);
-
-    // 4. Construct 4-quadrant Quota Cards aligned 100% with Antigravity-Manager
-    const cards: QuotaCardItem[] = [
-      {
-        id: "gemini-5h",
-        title: "Gemini 3.8 / 3.5 5H",
-        group: "gemini",
-        type: "5h",
-        remainingFraction: gemini5hFraction,
-        percentage: formatIntegerPercent(gemini5hFraction),
-        formattedPercent: `${formatIntegerPercent(gemini5hFraction)}%`,
-        resetTime: gemini5hReset,
-        resetCountdown: formatCompactCountdown(gemini5hReset),
-        color: gemini5hFraction < 0.2 ? "red" : gemini5hFraction < 0.5 ? "orange" : "green",
-      },
-      {
-        id: "claude-5h",
-        title: "Claude 4.6 / GPT 5H",
-        group: "claude",
-        type: "5h",
-        remainingFraction: tp5hFraction,
-        percentage: formatIntegerPercent(tp5hFraction),
-        formattedPercent: `${formatIntegerPercent(tp5hFraction)}%`,
-        resetTime: tp5hReset,
-        resetCountdown: formatCompactCountdown(tp5hReset),
-        color: tp5hFraction < 0.2 ? "red" : tp5hFraction < 0.5 ? "orange" : "green",
-      },
-      {
-        id: "gemini-weekly",
-        title: "Gemini 周配额",
-        group: "gemini",
-        type: "weekly",
-        remainingFraction: geminiWeeklyFraction,
-        percentage: formatIntegerPercent(geminiWeeklyFraction),
-        formattedPercent: `${formatIntegerPercent(geminiWeeklyFraction)}%`,
-        resetTime: geminiWeeklyReset,
-        resetCountdown: formatCompactCountdown(geminiWeeklyReset),
-        color: geminiWeeklyFraction < 0.2 ? "red" : geminiWeeklyFraction < 0.5 ? "orange" : "green",
-        description: geminiWeeklyDesc,
-      },
-      {
-        id: "claude-weekly",
-        title: "Claude 周配额",
-        group: "claude",
-        type: "weekly",
-        remainingFraction: tpWeeklyFraction,
-        percentage: formatIntegerPercent(tpWeeklyFraction),
-        formattedPercent: `${formatIntegerPercent(tpWeeklyFraction)}%`,
-        resetTime: tpWeeklyReset,
-        resetCountdown: formatCompactCountdown(tpWeeklyReset),
-        color: tpWeeklyFraction < 0.2 ? "red" : tpWeeklyFraction < 0.5 ? "orange" : "green",
-        description: tpWeeklyDesc,
-      },
-    ];
 
     // Build Model Groups array
     const groups: QuotaGroupSummary[] = [
@@ -499,13 +346,13 @@ export class AntigravityQuotaService {
           remainingFraction: gemini5hFraction,
           remainingPercent: formatFractionPercent(gemini5hFraction),
           resetTime: gemini5hReset,
-          resetCountdown: formatCompactCountdown(gemini5hReset),
+          resetCountdown: this.formatCountdown(gemini5hReset),
         },
         weekly: {
           remainingFraction: geminiWeeklyFraction,
           remainingPercent: formatFractionPercent(geminiWeeklyFraction),
           resetTime: geminiWeeklyReset,
-          resetCountdown: formatCompactCountdown(geminiWeeklyReset),
+          resetCountdown: this.formatWeeklyCountdown(geminiWeeklyReset),
           description: geminiWeeklyDesc,
         },
         effectiveFraction,
@@ -527,17 +374,17 @@ export class AntigravityQuotaService {
           remainingFraction: tp5hFraction,
           remainingPercent: formatFractionPercent(tp5hFraction),
           resetTime: tp5hReset,
-          resetCountdown: formatCompactCountdown(tp5hReset),
+          resetCountdown: this.formatCountdown(tp5hReset),
         },
         weekly: {
           remainingFraction: tpWeeklyFraction,
           remainingPercent: formatFractionPercent(tpWeeklyFraction),
           resetTime: tpWeeklyReset,
-          resetCountdown: formatCompactCountdown(tpWeeklyReset),
+          resetCountdown: this.formatWeeklyCountdown(tpWeeklyReset),
           description: tpWeeklyDesc,
         },
         effectiveFraction: tpWeeklyFraction <= 0.001 ? 0 : Math.min(tp5hFraction, tpWeeklyFraction),
-        effectivePercent: formatFractionPercent(Math.min(tp5hFraction, tpWeeklyFraction)),
+        effectivePercent: `${(Math.min(tp5hFraction, tpWeeklyFraction) * 100).toFixed(1)}%`,
         isWeeklyExhausted: tpWeeklyFraction <= 0.001,
         isWeeklyConstrained: tpWeeklyFraction < tp5hFraction,
         is5hCooling: tp5hFraction <= 0.001 && tpWeeklyFraction > 0.001,
@@ -547,15 +394,14 @@ export class AntigravityQuotaService {
     const quotaSummary: QuotaSummary = {
       model: modelId,
       displayName: modelEntry?.displayName || "Gemini 3.8 Flash (Antigravity)",
-      accountEmail: mgrAccount?.email || "ltxx1017@gmail.com",
       remainingFraction: gemini5hFraction,
       remainingPercent: formatFractionPercent(gemini5hFraction),
       resetTime: gemini5hReset,
-      resetCountdown: formatCompactCountdown(gemini5hReset),
+      resetCountdown: this.formatCountdown(gemini5hReset),
       weeklyRemainingFraction: geminiWeeklyFraction,
       weeklyRemainingPercent: formatFractionPercent(geminiWeeklyFraction),
       weeklyResetTime: geminiWeeklyReset,
-      weeklyResetCountdown: formatCompactCountdown(geminiWeeklyReset),
+      weeklyResetCountdown: this.formatWeeklyCountdown(geminiWeeklyReset),
       weeklyResetLabel: this.formatResetDate(geminiWeeklyReset),
       weeklyDescription: geminiWeeklyDesc,
       effectiveFraction,
@@ -565,7 +411,6 @@ export class AntigravityQuotaService {
       is5hCooling,
       tier: tierName,
       maxTokens: maxContextTokens,
-      cards,
       groups,
       isStale: this.isCircuitOpen || (Date.now() - this.lastFetchTime > 60_000),
     };
@@ -601,5 +446,104 @@ export class AntigravityQuotaService {
         isWarning,
       },
     };
+  }
+
+  public getCachedModelsData(): any {
+    return this.cachedModelsData;
+  }
+
+  public getCachedTierData(): any {
+    return this.cachedTierData;
+  }
+
+  public getCachedSummaryData(): any {
+    return this.cachedSummaryData;
+  }
+
+  public isFreeTier(): boolean {
+    if (!this.cachedTierData) return false;
+    return !this.cachedTierData.paidTier;
+  }
+
+  public async refreshIfNeeded(): Promise<void> {
+    await this.fetchUpstreamData();
+  }
+
+  public getModelQuotaState(modelId: string): {
+    isWeeklyExhausted: boolean;
+    isWeeklyConstrained: boolean;
+    is5hCooling: boolean;
+    resetCountdown?: string;
+    effectiveFraction: number;
+  } | null {
+    if (!this.cachedSummaryData && !this.cachedModelsData) {
+      return null;
+    }
+
+    const isClaudeOrGpt = /claude|gpt/i.test(modelId);
+    const summaryGroups = this.cachedSummaryData?.groups || [];
+
+    if (isClaudeOrGpt) {
+      const tpGroup = summaryGroups.find((g: any) => {
+        const name = (g.displayName || "").toLowerCase();
+        return name.includes("claude") || name.includes("gpt") || name.includes("3p");
+      });
+      const tp5h = tpGroup?.buckets?.find((b: any) => /5h|hour/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+      const tpWeekly = tpGroup?.buckets?.find((b: any) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+      const tp5hFraction = typeof tp5h?.remainingFraction === "number" ? tp5h.remainingFraction : 1.0;
+      const tpWeeklyFraction = typeof tpWeekly?.remainingFraction === "number" ? tpWeekly.remainingFraction : 1.0;
+      const isWeeklyExhausted = tpWeeklyFraction <= 0.001;
+      const is5hCooling = tp5hFraction <= 0.001 && !isWeeklyExhausted;
+      const effectiveFraction = isWeeklyExhausted ? 0 : Math.min(tp5hFraction, tpWeeklyFraction);
+
+      return {
+        isWeeklyExhausted,
+        isWeeklyConstrained: isWeeklyExhausted || tpWeeklyFraction < tp5hFraction,
+        is5hCooling,
+        resetCountdown: is5hCooling ? this.formatCountdown(tp5h?.resetTime) : undefined,
+        effectiveFraction,
+      };
+    } else {
+      const models = this.cachedModelsData || {};
+      const modelEntry = models[modelId] || models[`${modelId}-tiered`] || models[`${modelId}-thinking`];
+      const modelQuotaInfo = modelEntry?.quotaInfo;
+
+      const geminiGroup = summaryGroups.find((g: any) => {
+        const name = (g.displayName || "").toLowerCase();
+        return !name.includes("claude") && !name.includes("gpt") && (name.includes("gemini") || !name.includes("3p"));
+      });
+      const gemini5hBucket = geminiGroup?.buckets?.find((b: any) => /5h|hour/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+      const geminiWeeklyBucket = geminiGroup?.buckets?.find((b: any) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+
+      const gemini5hFraction =
+        typeof modelQuotaInfo?.remainingFraction === "number"
+          ? modelQuotaInfo.remainingFraction
+          : typeof gemini5hBucket?.remainingFraction === "number"
+          ? gemini5hBucket.remainingFraction
+          : 1.0;
+      const gemini5hReset = modelQuotaInfo?.resetTime || gemini5hBucket?.resetTime;
+
+      const anyWeeklyBucket =
+        geminiWeeklyBucket ||
+        summaryGroups.flatMap((g: any) => g.buckets || []).find((b: any) => /week|7d/i.test(`${b.window || ""} ${b.bucketId || ""}`));
+      const geminiWeeklyFraction =
+        typeof geminiWeeklyBucket?.remainingFraction === "number"
+          ? geminiWeeklyBucket.remainingFraction
+          : typeof anyWeeklyBucket?.remainingFraction === "number"
+          ? anyWeeklyBucket.remainingFraction
+          : 1.0;
+
+      const isWeeklyExhausted = geminiWeeklyFraction <= 0.001;
+      const is5hCooling = gemini5hFraction <= 0.001 && !isWeeklyExhausted;
+      const effectiveFraction = isWeeklyExhausted ? 0 : Math.min(gemini5hFraction, geminiWeeklyFraction);
+
+      return {
+        isWeeklyExhausted,
+        isWeeklyConstrained: isWeeklyExhausted || geminiWeeklyFraction < gemini5hFraction,
+        is5hCooling,
+        resetCountdown: is5hCooling ? this.formatCountdown(gemini5hReset) : undefined,
+        effectiveFraction,
+      };
+    }
   }
 }

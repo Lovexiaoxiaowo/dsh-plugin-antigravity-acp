@@ -339,12 +339,123 @@ export class DshSessionManager {
         }
         return cleaned.trim();
     }
+    /**
+     * Parses structured conversation turns if the message contains an embedded '# Prior conversation' block.
+     * Accurately extracts historical turns and the authentic current user query.
+     */
+    parsePriorConversation(text) {
+        if (!text || !text.includes("# Prior conversation"))
+            return null;
+        const priorIdx = text.indexOf("# Prior conversation");
+        const convText = text.slice(priorIdx);
+        const headerRegex = /##\s*(User|Assistant[^\n]*)\r?\n/gi;
+        const sections = [];
+        let match;
+        while ((match = headerRegex.exec(convText)) !== null) {
+            const isUser = match[1].toLowerCase().startsWith("user");
+            sections.push({
+                role: isUser ? "user" : "assistant",
+                startIndex: match.index,
+                headerEndIndex: match.index + match[0].length,
+            });
+        }
+        if (sections.length === 0)
+            return null;
+        const history = [];
+        let currentQuery = "";
+        for (let i = 0; i < sections.length; i++) {
+            const sec = sections[i];
+            const nextStart = i + 1 < sections.length ? sections[i + 1].startIndex : convText.length;
+            let rawBody = convText.slice(sec.headerEndIndex, nextStart).trim();
+            if (sec.role === "user") {
+                const codeBlockMatch = rawBody.match(/^```[a-z]*\r?\n([\s\S]*?)\r?\n```$/);
+                const body = codeBlockMatch ? codeBlockMatch[1].trim() : rawBody;
+                if (i === sections.length - 1) {
+                    currentQuery = body;
+                }
+                else {
+                    history.push({ role: "user", text: body });
+                }
+            }
+            else {
+                let body = rawBody;
+                let trailingText = "";
+                const fenceMatch = rawBody.match(/^(`{3,4})[^\n]*\r?\n([\s\S]*?)\r?\n\1\s*([\s\S]*)$/);
+                if (fenceMatch) {
+                    body = fenceMatch[2].trim();
+                    trailingText = fenceMatch[3].trim();
+                }
+                history.push({ role: "assistant", text: body });
+                if (i === sections.length - 1 && trailingText) {
+                    currentQuery = trailingText;
+                }
+            }
+        }
+        if (!currentQuery && history.length > 0) {
+            const lastUser = [...history].reverse().find((h) => h.role === "user");
+            if (lastUser)
+                currentQuery = lastUser.text;
+        }
+        return { history, currentQuery };
+    }
+    /**
+     * Strips harness instructions, system prompts, embedded tools/skills,
+     * router policies, and extracts the genuine user intent.
+     */
     cleanUserQuery(text) {
         if (!text)
             return "";
-        const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
-        let cleaned = match && match[1]?.trim() ? match[1].trim() : text.trim();
-        cleaned = cleaned.replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, "").trim();
+        // 1. Unwrap <USER_REQUEST> if present
+        const reqMatch = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
+        let cleaned = reqMatch && reqMatch[1]?.trim() ? reqMatch[1].trim() : text.trim();
+        cleaned = cleaned.replace(/^<USER_REQUEST>\s*/, "");
+        cleaned = cleaned.replace(/\s*<\/USER_REQUEST>$/, "");
+        // 2. Strip <ADDITIONAL_METADATA> blocks
+        cleaned = cleaned.replace(/<ADDITIONAL_METADATA>[\s\S]*?(?:<\/ADDITIONAL_METADATA>|$)/gi, "").trim();
+        // 3. If it contains embedded # Prior conversation, extract the authentic trailing user query
+        const parsedConv = this.parsePriorConversation(cleaned);
+        if (parsedConv && parsedConv.currentQuery) {
+            cleaned = parsedConv.currentQuery;
+        }
+        // 4. Strip Pi / DSH Embedded Resource & harness session instructions
+        cleaned = cleaned.replace(/Embedded resource \([^\)]+\):?\s*/gi, "");
+        cleaned = cleaned.replace(/#\s*Pi session instructions[\s\S]*?(?=(?:<|---+|# Prior conversation|## User|$))/gi, "");
+        // 5. Strip XML-like system / harness blocks injected by coding agents
+        const tagsToStrip = [
+            "tools",
+            "rules",
+            "docs",
+            "skills",
+            "available_skills",
+            "cwd",
+            "context",
+            "system_instructions",
+            "environment_context",
+            "user_information",
+            "mcp_servers",
+            "subagents",
+            "messaging",
+            "conversation_transcript",
+            "artifacts",
+            "guidelines",
+            "communication_style",
+            "identity",
+        ];
+        for (const tag of tagsToStrip) {
+            const reg = new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`, "gi");
+            cleaned = cleaned.replace(reg, "");
+        }
+        // 6. Strip Router Workbench and DSH host policies
+        cleaned = cleaned.replace(/Router Workbench policy:[\s\S]*?(?=(?:---\s*\n|# Prior conversation|## User|\n\n|$))/gi, "");
+        cleaned = cleaned.replace(/^Current DSH file policy:.*$/gm, "");
+        cleaned = cleaned.replace(/^Approval policy:.*$/gm, "");
+        cleaned = cleaned.replace(/^Time sampled while preparing turn.*$/gm, "");
+        cleaned = cleaned.replace(/^Current runtime context:.*$/gm, "");
+        cleaned = cleaned.replace(/^Current working directory:.*$/gm, "");
+        // 7. Strip markdown horizontal dividers and collapse excessive blank lines
+        cleaned = cleaned.replace(/^[ \t]*-{3,}[ \t]*(?:\r?\n|$)/gm, "");
+        cleaned = cleaned.replace(/^[ \t]*-{3,}\s*/, "");
+        cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
         return cleaned;
     }
     isSystemInjection(msg) {
@@ -369,6 +480,16 @@ export class DshSessionManager {
             text.startsWith("Current DSH file policy:") ||
             text.startsWith("Approval policy:")) {
             return true;
+        }
+        // Check if message is pure harness boilerplate with no real user query
+        if (text.includes("<tools>") ||
+            text.includes("<skills>") ||
+            text.includes("Embedded resource (urn:pi:") ||
+            text.startsWith("# Pi session instructions")) {
+            const cleaned = this.cleanUserQuery(text);
+            if (!cleaned) {
+                return true;
+            }
         }
         return false;
     }
@@ -486,8 +607,9 @@ export class DshSessionManager {
             const msg = messages[i];
             if (msg.role === "user" && !this.isSystemInjection(msg)) {
                 const text = this.extractText(msg).trim();
-                if (text) {
-                    return text;
+                const cleaned = this.cleanUserQuery(text);
+                if (cleaned) {
+                    return cleaned;
                 }
             }
         }
@@ -496,12 +618,15 @@ export class DshSessionManager {
             const msg = messages[i];
             if (msg.role === "user") {
                 const text = this.extractText(msg).trim();
-                if (text)
-                    return text;
+                const cleaned = this.cleanUserQuery(text);
+                if (cleaned)
+                    return cleaned;
             }
         }
         // Ultimate fallback: last element text
-        return this.extractText(messages[messages.length - 1]) || "Hello";
+        const raw = this.extractText(messages[messages.length - 1]);
+        const cleaned = this.cleanUserQuery(raw);
+        return cleaned || raw || "Hello";
     }
     /**
      * Formats DSH messages array into contextual prompt text.
@@ -514,10 +639,13 @@ export class DshSessionManager {
         if (!msg)
             return [{ type: "text", text: "" }];
         if (typeof msg.content === "string") {
-            return [{ type: "text", text: msg.content }];
+            const cleaned = this.cleanUserQuery(msg.content);
+            return [{ type: "text", text: cleaned || msg.content }];
         }
         if (!Array.isArray(msg.content)) {
-            return [{ type: "text", text: this.extractText(msg) }];
+            const raw = this.extractText(msg);
+            const cleaned = this.cleanUserQuery(raw);
+            return [{ type: "text", text: cleaned || raw }];
         }
         const blocks = [];
         let accumulatedText = "";
@@ -621,8 +749,8 @@ export class DshSessionManager {
         }
         const currentBlocks = await this.extractContentBlocks(currentMsg, attachmentResolver);
         // If warm session, ACP preserves previous context; return current turn's blocks
-        if (!isNewSession || messages.length === 1) {
-            return currentBlocks;
+        if (!isNewSession) {
+            return this.attachToolGuardrail(currentBlocks);
         }
         // New session with history: prepend prior context to text block
         const historyLines = [
@@ -630,6 +758,34 @@ export class DshSessionManager {
             "Below is the conversation history preceding this turn. Continue directly based on this context.",
             "",
         ];
+        if (messages.length === 1) {
+            const rawText = this.extractText(currentMsg);
+            const parsedConv = this.parsePriorConversation(rawText);
+            if (parsedConv && parsedConv.history.length > 0) {
+                for (const item of parsedConv.history) {
+                    const role = item.role === "assistant" ? "Assistant" : "User";
+                    let content = item.text;
+                    if (item.role === "assistant") {
+                        content = this.pruneAssistantHistory(content);
+                    }
+                    if (content) {
+                        historyLines.push(`[${role}]:\n${content}\n`);
+                    }
+                }
+                historyLines.push("=== [Current Turn: User Query] ===");
+                const mainText = currentBlocks.find((b) => b.type === "text")?.text || parsedConv.currentQuery;
+                historyLines.push(mainText);
+                const textIdx = currentBlocks.findIndex((b) => b.type === "text");
+                if (textIdx >= 0) {
+                    currentBlocks[textIdx] = { type: "text", text: historyLines.join("\n") };
+                }
+                else {
+                    currentBlocks.unshift({ type: "text", text: historyLines.join("\n") });
+                }
+                return this.attachToolGuardrail(currentBlocks);
+            }
+            return this.attachToolGuardrail(currentBlocks);
+        }
         const limit = realUserIdx >= 0 ? realUserIdx : messages.length - 1;
         for (let i = 0; i < limit; i++) {
             const m = messages[i];
@@ -658,7 +814,22 @@ export class DshSessionManager {
         else {
             currentBlocks.unshift({ type: "text", text: historyLines.join("\n") });
         }
-        return currentBlocks;
+        return this.attachToolGuardrail(currentBlocks);
+    }
+    /**
+     * Attaches a concise instruction guardrail to prevent the autonomous agent
+     * from spiraling into unrequested 50+ step filesystem/command explorations for simple Q&A.
+     */
+    attachToolGuardrail(blocks) {
+        const textIdx = blocks.findIndex((b) => b.type === "text");
+        const guardrail = "\n\n[Instruction]: Answer directly and concisely based on context and knowledge. Do NOT perform unsolicited multi-step filesystem scans or command explorations unless explicitly requested by the user.";
+        if (textIdx >= 0) {
+            const current = blocks[textIdx];
+            if (current.text && !current.text.includes("[Instruction]: Answer directly")) {
+                blocks[textIdx] = { ...current, text: current.text + guardrail };
+            }
+        }
+        return blocks;
     }
     formatPromptWithHistory(messages, isNewSession) {
         if (!Array.isArray(messages) || messages.length === 0) {
@@ -685,6 +856,28 @@ export class DshSessionManager {
         // If new ACP session with multiple messages (e.g. session recovery or model switch),
         // reconstruct prior context as structured conversation preamble.
         if (messages.length === 1) {
+            const rawText = this.extractText(messages[0]);
+            const parsedConv = this.parsePriorConversation(rawText);
+            if (parsedConv && parsedConv.history.length > 0) {
+                const historyLines = [
+                    "=== [Context Reconstruction: Conversation History] ===",
+                    "Below is the conversation history preceding this turn. Continue directly based on this context.",
+                    "",
+                ];
+                for (const item of parsedConv.history) {
+                    const role = item.role === "assistant" ? "Assistant" : "User";
+                    let content = item.text;
+                    if (item.role === "assistant") {
+                        content = this.pruneAssistantHistory(content);
+                    }
+                    if (content) {
+                        historyLines.push(`[${role}]:\n${content}\n`);
+                    }
+                }
+                historyLines.push("=== [Current Turn: User Query] ===");
+                historyLines.push(parsedConv.currentQuery || currentPrompt);
+                return historyLines.join("\n");
+            }
             return currentPrompt;
         }
         const historyLines = [

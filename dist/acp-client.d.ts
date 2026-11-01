@@ -1,6 +1,7 @@
 import { type ChildProcess } from "node:child_process";
 import { type RequestPermissionRequest, type RequestPermissionResponse, type SessionNotification, type InitializeResponse } from "@agentclientprotocol/sdk";
-import type { PermissionMode, ReasoningEffort } from "./types.js";
+import type { PermissionMode, ReasoningEffort, ModelOption } from "./types.js";
+export type AcpModelOption = ModelOption;
 export interface AcpClientEventHandlers {
     onNotification?: (notification: SessionNotification) => void;
     onRequestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
@@ -15,6 +16,7 @@ export declare class AntigravityAcpClient {
     private childProcess;
     private connection;
     private currentSessionId;
+    private cachedConfigModels;
     private isPaused;
     constructor(serverBinaryPath: string, defaultArgs?: string[], handlers?: AcpClientEventHandlers);
     /**
@@ -39,6 +41,21 @@ export declare class AntigravityAcpClient {
      * Resumes an existing agent session.
      */
     resumeSession(sessionId: string, cwd?: string): Promise<boolean>;
+    /**
+     * Extracts model options from ACP SessionConfigOption array and updates cache.
+     */
+    extractAndCacheConfigOptions(configOptions?: Array<any> | null): AcpModelOption[];
+    /**
+     * Returns in-memory or persisted ACP supported models.
+     */
+    getConfigModels(): AcpModelOption[] | null;
+    /**
+     * Probes supported models by initializing a transient ACP session.
+     * Safe to call asynchronously in background; never throws fatal error.
+     */
+    probeSupportedModels(cwd?: string): Promise<AcpModelOption[]>;
+    private loadPersistedModelsCache;
+    private persistModelsCache;
     /**
      * Prompts the agent with a user request.
      */

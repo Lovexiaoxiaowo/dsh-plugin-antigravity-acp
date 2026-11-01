@@ -10,6 +10,14 @@ export function getAntigravityTokenPath() {
     return path.join(geminiHome, "antigravity-acp", "acp_token.json");
 }
 /**
+ * Returns standard cache file path for Antigravity supported models:
+ * ~/.gemini/antigravity-acp/acp_models_cache.json
+ */
+export function getAntigravityModelsCachePath() {
+    const geminiHome = process.env.GEMINI_HOME || path.join(os.homedir(), ".gemini");
+    return path.join(geminiHome, "antigravity-acp", "acp_models_cache.json");
+}
+/**
  * Checks whether user has valid local Antigravity OAuth credentials.
  */
 export function hasLocalCredentials() {

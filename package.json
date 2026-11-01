@@ -23,7 +23,8 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync:dsh": "robocopy . \"C:\\Users\\tanfeng\\.dsh\\profiles\\desktop\\node_modules\\dsh-plugin-antigravity-acp\" /E /XD node_modules .git /XF .git* & exit 0"
   },
   "keywords": [
     "dsh-plugin",
