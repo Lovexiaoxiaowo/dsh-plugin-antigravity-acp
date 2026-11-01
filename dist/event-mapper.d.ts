@@ -33,12 +33,23 @@ export declare class DshStreamWriter {
     getRecordedTextLength(): number;
     ensureReasoningOpen(): void;
     writeThinking(text: string): void;
+    /**
+     * Writes multiple tool calls sequentially and emits the final tool_calls finish chunk.
+     */
+    writeToolCalls(calls: Array<{
+        id: string;
+        name: string;
+        args: string | Record<string, any>;
+    }>): void;
+    /**
+     * Single tool call convenience method delegating to writeToolCalls.
+     */
     writeToolCall(id: string, name: string, args: string | Record<string, any>): void;
     closeReasoningBlock(): void;
     ensureTextOpen(): void;
     writeText(text: string): void;
     closeTextBlock(): void;
     writeUsage(usage: TokenAccounting): void;
-    finish(reason?: "stop" | "max-tokens" | "error"): void;
+    finish(reason?: "stop" | "max-tokens" | "error" | "tool-calls" | "tool_calls"): void;
 }
 //# sourceMappingURL=event-mapper.d.ts.map

@@ -132,19 +132,60 @@ export function mapSessionUpdate(notification, stepTracker) {
             const toolId = String(update.toolCallId || `tool-${Date.now()}`);
             const toolName = clean(update.name || update.title || "antigravity-tool");
             const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name, stepTracker);
-            const titlePart = displayTitle ? ` \`${displayTitle}\`` : "";
-            const status = update.status && update.status !== "in_progress" ? ` · ${update.status}` : "";
             const argsStr = formatArguments(update.arguments);
-            const argSection = argsStr ? `\n> 📥 参数: \`${argsStr}\`` : "";
-            const isSubagent = toolName.includes("subagent") || Boolean(update.title && update.title.includes("subagent"));
+            const isRunCommand = Boolean(update.arguments?.CommandLine ||
+                (update.name && String(update.name).toLowerCase() === "run_command") ||
+                (update.title && String(update.title).toLowerCase() === "run_command"));
+            const hasSubagentsArg = Boolean(update.arguments && (Array.isArray(update.arguments.Subagents) ||
+                Array.isArray(update.arguments.subagents) ||
+                update.arguments.brief));
+            let parsedArgs = update.arguments ?? update.rawInput ?? update.input ?? update.args;
+            if (typeof parsedArgs === "string") {
+                try {
+                    parsedArgs = JSON.parse(parsedArgs);
+                }
+                catch { }
+            }
+            if (parsedArgs && typeof parsedArgs === "object") {
+                if (typeof parsedArgs.Subagents === "string") {
+                    try {
+                        parsedArgs.Subagents = JSON.parse(parsedArgs.Subagents);
+                    }
+                    catch { }
+                }
+                if (typeof parsedArgs.subagents === "string") {
+                    try {
+                        parsedArgs.subagents = JSON.parse(parsedArgs.subagents);
+                    }
+                    catch { }
+                }
+            }
+            const isSubagentIdentifier = (str) => {
+                if (!str)
+                    return false;
+                const norm = str.toLowerCase().replace(/[^a-z0-9]/g, "");
+                return (norm.includes("subagent") ||
+                    norm.includes("swarm") ||
+                    norm.includes("delegate"));
+            };
+            const isSubagent = !isRunCommand && (hasSubagentsArg ||
+                isSubagentIdentifier(String(update.name || "")) ||
+                isSubagentIdentifier(String(update.title || "")) ||
+                isSubagentIdentifier(String(displayTitle || "")) ||
+                isSubagentIdentifier(toolName));
+            const targetName = (displayTitle && displayTitle !== stepLabel) ? displayTitle : toolName;
+            const argPreview = argsStr ? ` (${argsStr})` : "";
+            const text = isSubagent
+                ? `\n🤖 [${stepLabel}] 派发独立子任务: ${targetName}${argPreview}\n`
+                : `\n🛠️ [${stepLabel}] ${targetName}${argPreview}\n`;
             return [
                 {
                     type: "tool",
-                    text: isSubagent ? `\n> 🤖 **[${stepLabel}] 派发独立子任务 (Subagent)**${titlePart}\n` : `\n> 🛠️ **[${stepLabel}]**${titlePart}${status}${argSection}\n`,
+                    text,
                     toolCallId: toolId,
                     name: toolName,
                     args: argsStr,
-                    rawArgs: update.arguments,
+                    rawArgs: parsedArgs,
                     isStart: true,
                     isSubagent,
                 },
@@ -154,37 +195,23 @@ export function mapSessionUpdate(notification, stepTracker) {
             const toolId = String(update.toolCallId || "");
             const toolName = clean(update.name || update.title || "antigravity-tool");
             const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name, stepTracker);
-            const isCompleted = update.status === "completed";
             const isFailed = update.status === "failed" || update.status === "error";
-            let tag = `⚡ **[${stepLabel}]**`;
-            if (isCompleted) {
-                tag = `✅ **[${stepLabel} 完成]**`;
+            if (isFailed) {
+                const titlePart = (displayTitle && displayTitle !== stepLabel) ? ` \`${displayTitle}\`` : "";
+                const details = formatToolContent(update.content);
+                const errDetail = details ? `\n> ⚠️ 失败详情: ${details.slice(0, 150)}` : "";
+                return [
+                    {
+                        type: "tool",
+                        text: `\n❌ [${stepLabel} 失败]${titlePart}${errDetail}\n`,
+                        toolCallId: toolId,
+                        name: toolName,
+                        isStart: false,
+                    },
+                ];
             }
-            else if (isFailed) {
-                tag = `❌ **[${stepLabel} 失败]**`;
-            }
-            const titlePart = (displayTitle && displayTitle !== stepLabel) ? ` \`${displayTitle}\`` : "";
-            const details = formatToolContent(update.content);
-            let detailSection = "";
-            if (details) {
-                const lines = details.split("\n").filter(Boolean);
-                if (details.length <= 250 && lines.length <= 3) {
-                    detailSection = `\n> \`\`\`\n${lines.map(l => `> ${l}`).join("\n")}\n> \`\`\``;
-                }
-                else {
-                    const preview = lines.slice(0, 2).map(l => `> ${l}`).join("\n");
-                    detailSection = `\n> \`\`\`\n${preview}\n> ... [已折叠 ${lines.length} 行输出] ...\n> \`\`\``;
-                }
-            }
-            return [
-                {
-                    type: "tool",
-                    text: `\n> ${tag}${titlePart}${detailSection}\n`,
-                    toolCallId: toolId,
-                    name: toolName,
-                    isStart: false,
-                },
-            ];
+            // Suppress noisy completion banners to preserve clean DSH native interface style
+            return [];
         }
         case "plan":
         case "plan_update": {
@@ -204,17 +231,33 @@ export function mapSessionUpdate(notification, stepTracker) {
         }
         case "usage_update": {
             // Ignore account-level cumulative quota meters (>1M tokens) to prevent DSH token counter explosion
-            const tokens = update.token_count || update.usage;
+            const tokens = update.token_count || update.usage || update.usageMetadata;
             if (tokens) {
-                const inTokens = Number(tokens.input_tokens || tokens.inputTokens || 0);
-                const outTokens = Number(tokens.output_tokens || tokens.outputTokens || 0);
-                if (inTokens > 0 && inTokens <= 1_000_000) {
+                const inTokens = Number(tokens.input_tokens ||
+                    tokens.inputTokens ||
+                    tokens.promptTokenCount ||
+                    tokens.prompt_tokens ||
+                    0);
+                const outTokens = Number(tokens.output_tokens ||
+                    tokens.outputTokens ||
+                    tokens.candidatesTokenCount ||
+                    tokens.completion_tokens ||
+                    0);
+                const cached = Number(tokens.cache_read_tokens ||
+                    tokens.cached_tokens ||
+                    tokens.cachedContentTokenCount ||
+                    tokens.cached_content_token_count ||
+                    tokens.cacheReadTokens ||
+                    tokens.cache_read_input_tokens ||
+                    0);
+                if ((inTokens > 0 || cached > 0) && inTokens <= 1_000_000) {
+                    const promptTotal = inTokens > cached ? inTokens : (inTokens + cached);
                     const usage = {
                         inputTokens: inTokens,
                         outputTokens: outTokens,
-                        reasoningTokens: Number(tokens.thought_tokens || 0),
-                        cachedTokens: Number(tokens.cached_tokens || 0),
-                        totalTokens: inTokens + outTokens,
+                        reasoningTokens: Number(tokens.thought_tokens || tokens.thoughtTokens || tokens.reasoningTokens || 0),
+                        cachedTokens: cached,
+                        totalTokens: promptTotal + outTokens,
                     };
                     return [{ type: "usage", usage }];
                 }
@@ -263,14 +306,15 @@ export class DshStreamWriter {
     writeThinking(text) {
         if (!text || this.hasEnded)
             return;
-        // Prevent giant raw tool execution outputs from polluting the assistant's permanent text response
-        if (this.textStarted && !this.textClosed) {
-            if (text.includes("```")) {
-                const compact = text.replace(/```[\s\S]*?```/g, "[已折叠长输出]");
-                this.writeText(compact);
-            }
-            else {
-                this.writeText(text);
+        // NEVER leak internal thinking or tool traces into the assistant's final message response (writeText)
+        if (this.textStarted) {
+            if (!this.reasoningClosed && this.reasoningStarted) {
+                this.reasoningBuffer += text;
+                this.pushChunk({
+                    type: "reasoning-delta",
+                    index: 0,
+                    text,
+                });
             }
             return;
         }
@@ -282,40 +326,51 @@ export class DshStreamWriter {
             text,
         });
     }
-    writeToolCall(id, name, args) {
-        if (this.hasEnded)
+    /**
+     * Writes multiple tool calls sequentially and emits the final tool_calls finish chunk.
+     */
+    writeToolCalls(calls) {
+        if (this.hasEnded || !Array.isArray(calls) || calls.length === 0)
             return;
         this.closeReasoningBlock();
         this.closeTextBlock();
-        const callIndex = this.nextBlockIndex++;
-        const argsStr = typeof args === "string" ? args : JSON.stringify(args);
-        this.pushChunk({
-            type: "block-start",
-            index: callIndex,
-            blockType: "tool_call",
-        });
-        this.pushChunk({
-            type: "tool-call-delta",
-            index: callIndex,
-            id,
-            name,
-            argumentsDelta: argsStr,
-        });
-        this.pushChunk({
-            type: "block-end",
-            index: callIndex,
-            block: {
-                type: "tool-call",
-                id,
-                name,
-                arguments: argsStr,
-            },
-        });
+        for (const call of calls) {
+            const callIndex = this.nextBlockIndex++;
+            const argsStr = typeof call.args === "string" ? call.args : JSON.stringify(call.args);
+            this.pushChunk({
+                type: "block-start",
+                index: callIndex,
+                blockType: "tool-call",
+            });
+            this.pushChunk({
+                type: "tool-call-delta",
+                index: callIndex,
+                id: call.id,
+                name: call.name,
+                argumentsDelta: argsStr,
+            });
+            this.pushChunk({
+                type: "block-end",
+                index: callIndex,
+                block: {
+                    type: "tool-call",
+                    id: call.id,
+                    name: call.name,
+                    arguments: argsStr,
+                },
+            });
+        }
         this.hasEnded = true;
         this.pushChunk({
             type: "finish",
-            reason: { kind: "tool_calls" },
+            reason: { kind: "tool-calls" },
         });
+    }
+    /**
+     * Single tool call convenience method delegating to writeToolCalls.
+     */
+    writeToolCall(id, name, args) {
+        this.writeToolCalls([{ id, name, args }]);
     }
     closeReasoningBlock() {
         if (this.reasoningStarted && !this.reasoningClosed) {
@@ -391,7 +446,7 @@ export class DshStreamWriter {
         this.hasEnded = true;
         this.pushChunk({
             type: "finish",
-            reason: { kind: reason },
+            reason: { kind: reason === "tool_calls" ? "tool-calls" : reason },
         });
     }
 }

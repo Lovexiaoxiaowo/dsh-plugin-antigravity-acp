@@ -74,6 +74,19 @@ export interface QuotaGroupItem {
     resetCountdown?: string;
     description?: string;
 }
+export interface QuotaCardItem {
+    id: string;
+    title: string;
+    group: "gemini" | "claude";
+    type: "5h" | "weekly";
+    remainingFraction: number;
+    percentage: number;
+    formattedPercent: string;
+    resetTime?: string;
+    resetCountdown?: string;
+    color: "green" | "orange" | "red";
+    description?: string;
+}
 export interface QuotaGroupSummary {
     key: "gemini" | "claude" | "argon" | string;
     displayName: string;
@@ -88,8 +101,10 @@ export interface QuotaGroupSummary {
     is5hCooling: boolean;
 }
 export interface QuotaSummary {
+    isStale?: boolean;
     model: string;
     displayName: string;
+    accountEmail?: string;
     remainingFraction: number;
     remainingPercent: string;
     resetTime?: string;
@@ -107,9 +122,11 @@ export interface QuotaSummary {
     is5hCooling?: boolean;
     tier?: string;
     maxTokens: number;
+    cards?: QuotaCardItem[];
     groups?: QuotaGroupSummary[];
 }
 export interface SessionQuotaSnapshot {
+    isStale?: boolean;
     quota?: QuotaSummary;
     sessionTokens: TokenAccounting;
     contextUsage: {

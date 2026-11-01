@@ -1,5 +1,7 @@
+import { AntigravityAcpClient } from "./acp-client.js";
 import { DshSessionManager } from "./session-manager.js";
 import { AntigravityQuotaService } from "./quota-service.js";
+import { AsyncSemaphore } from "./semaphore.js";
 import type { AntigravityPluginConfig, ReasoningEffort, SessionQuotaSnapshot } from "./types.js";
 export * from "./types.js";
 export * from "./bootstrapper.js";
@@ -9,11 +11,52 @@ export * from "./session-manager.js";
 export * from "./quota-service.js";
 export * from "./event-mapper.js";
 export declare const name = "dsh-plugin-antigravity-acp";
+export interface AntigravityModelMeta {
+    id: string;
+    name: string;
+    description: string;
+    contextWindow: number;
+    defaultMaxTokens?: number;
+    supportsThinking?: boolean;
+}
+export declare const KNOWN_ANTIGRAVITY_MODELS: AntigravityModelMeta[];
 export declare const inject: never[];
 /**
  * Main Service class for DSH Integration.
  * Fits into DeepSeek Harness (DSH) lifecycle, Cordis service architecture, or standalone usage.
  */
+/**
+ * Backpressure options and state controller for streaming queue.
+ */
+export interface BackpressureQueueOptions {
+    highWatermark?: number;
+    lowWatermark?: number;
+    criticalWatermark?: number;
+    onPause?: () => void;
+    onResume?: () => void;
+}
+export declare class StreamingBackpressureQueue<T extends {
+    chunk?: any;
+    error?: any;
+    done?: boolean;
+}> {
+    private readonly options;
+    private readonly queue;
+    private resolver;
+    private isPaused;
+    private isFinished;
+    readonly highWatermark: number;
+    readonly lowWatermark: number;
+    readonly criticalWatermark: number;
+    constructor(options?: BackpressureQueueOptions);
+    get length(): number;
+    get paused(): boolean;
+    push(item: T): boolean;
+    next(): Promise<T>;
+    resume(): void;
+    clear(): void;
+    finish(): void;
+}
 export declare class DshAntigravityService {
     private readonly config;
     private client;
@@ -27,7 +70,14 @@ export declare class DshAntigravityService {
     onAuthChange?: () => void;
     readonly sessionManager: DshSessionManager;
     readonly quotaService: AntigravityQuotaService;
+    readonly promptSemaphore: AsyncSemaphore;
     private attachmentStore;
+    /**
+     * Reads genuine, authoritative turn-level token counts directly from
+     * the Antigravity runtime transcript (.system_generated/logs/transcript.jsonl).
+     */
+    private extractLastStepTokensFromTranscript;
+    getClient(): AntigravityAcpClient | null;
     setAttachmentStore(store: any): void;
     resolveAttachment(attachmentRef: any): Promise<{
         data: string;
@@ -106,6 +156,23 @@ export declare class DshAntigravityService {
      * Quick completion test helper for DSH UI / card test
      */
     testPrompt(text: string, cwd?: string): Promise<string>;
+    /**
+   * Executes a self-contained delegated subtask using an isolated ACP session.
+   * Returns authoritative outcome summary, reasoning log, and execution status back to caller.
+   */
+    executeDelegatedTask(prompt: string, options?: {
+        cwd?: string;
+        model?: string;
+        reasoningEffort?: ReasoningEffort;
+        timeoutMs?: number;
+    }): Promise<{
+        success: boolean;
+        output: string;
+        reasoning?: string;
+        model: string;
+        durationMs: number;
+        error?: string;
+    }>;
     /**
      * Shuts down service.
      */

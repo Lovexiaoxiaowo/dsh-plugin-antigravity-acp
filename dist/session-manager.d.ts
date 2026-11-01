@@ -1,15 +1,30 @@
 import type { AcpSessionBinding, TokenAccounting } from "./types.js";
 export declare class DshSessionManager {
+    private readonly sessionsDir;
     private bindings;
     private tokenStats;
-    constructor();
+    private saveTimeout;
+    private isWriting;
+    private pendingWrite;
+    private static exitHooksRegistered;
+    private static activeInstances;
+    private readonly sessionsFile;
+    private readonly tokenStatsFile;
+    constructor(sessionsDir?: string);
+    getSessionsDir(): string;
+    dispose(): void;
+    private registerExitHooks;
     private loadFromDisk;
+    scheduleSave(debounceMs?: number): void;
+    flush(): Promise<void>;
+    private atomicWriteFileSync;
+    flushSync(): void;
     private saveToDisk;
     getBinding(dshSessionId: string): AcpSessionBinding | undefined;
     saveBinding(binding: AcpSessionBinding): void;
     incrementMessageCount(dshSessionId: string): void;
     removeBinding(dshSessionId: string): void;
-    recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>, promptChars?: number, outputChars?: number): TokenAccounting;
+    recordUsage(dshSessionId: string, snapshot: Partial<TokenAccounting>, promptChars?: number, outputChars?: number, totalContextTokens?: number): TokenAccounting;
     getUsage(dshSessionId: string): TokenAccounting;
     /**
      * Prunes verbose tool executions, stdout dumps and plans from historical assistant messages
@@ -22,6 +37,18 @@ export declare class DshSessionManager {
      * Safely extracts text content from various DSH Message block structures.
      */
     extractText(msg: any): string;
+    /**
+     * Reconstructs conversation history preamble for new or recovered sessions.
+     */
+    private reconstructHistoryPreamble;
+    /**
+     * Checks if the trailing messages of a turn represent tool execution results.
+     */
+    getTrailingToolMessages(messages: any[]): any[];
+    /**
+     * Formats trailing tool messages into structured tool execution result text blocks.
+     */
+    formatToolExecutionResults(toolMsgs: any[]): string;
     /**
      * Locates the genuine human user query from the messages list,
      * skipping trailing time-context injections appended by DSH plugins.
