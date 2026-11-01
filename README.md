@@ -8,7 +8,7 @@
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.14-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.1.0-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
@@ -40,6 +40,21 @@
 ---
 
 ## 版本更新日志 (Changelog)
+
+### v1.1.0 (2026-10-31)
+- **全量解锁 Google Antigravity 官方模型矩阵（Full Model Matrix Matrix Unlock）**：
+  - 重构模型注册机制，解除单一模型硬编码限制，支持完整 9 款核心旗舰模型（Gemini 3.8 Flash、Gemini 2.5 Pro、Gemini 2.5 Flash Thinking、Gemini 3.5 Flash Lite、Claude Opus 4.6 Thinking、Claude Sonnet 4.6、GPT-OSS 120B 等）；
+  - 支持动态上游端点探针与标准矩阵自动合并排重，无缝透传 ACP 多模型切换选项。
+- **Token 记账、真实上下文比例与缓存精度校准（Accurate Context & Token Accounting）**：
+  - 修复 0% 上下文比例异常计算，消除伪缓存失真，确保 5H 滑动窗口与周配额真实精准呈现。
+- **生产级架构加固与韧性管道（Architecture Hardening & Resilience Pipeline）**：
+  - 落地流式传输背压水线保护（Backpressure Guard），防止海量数据冲击；
+  - 引入配额 429 断路器与超时熔断；实现异步防抖与原子级安全会话持久化。
+
+### v1.0.15 (2026-10-31)
+- **架构加固与生产级管道背压保护**：
+  - 完成全面架构审计加固，集成流式队列高低水位保护与会话原子持久化；
+  - 构建全链路单元测试套件（32 个全绿 Vitest 用例）。
 
 ### v1.0.14 (2026-10-31)
 - **Token 暴涨与 49% 缓存命中率失真根治（Token Multiplier & Cache Accounting Fix）**：

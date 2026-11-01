@@ -43,7 +43,7 @@ describe("event-mapper protocol suite", () => {
     const notification: any = {
       sessionId: "sess-1",
       update: {
-        sessionUpdate: "tool-call",
+        sessionUpdate: "tool_call",
         toolCallId: "call-xyz",
         title: "view_file",
         status: "in_progress",
@@ -95,7 +95,7 @@ describe("event-mapper protocol suite", () => {
     const notification: any = {
       sessionId: "sess-1",
       update: {
-        sessionUpdate: "tool-call",
+        sessionUpdate: "tool_call",
         toolCallId: "sub-1",
         title: "invoke_subagent",
         status: "in_progress",

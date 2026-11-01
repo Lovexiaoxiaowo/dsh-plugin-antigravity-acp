@@ -1250,3 +1250,4 @@ export function apply(ctx: any, config: AntigravityPluginConfig = {}) {
     await service.dispose();
   });
 }
+
