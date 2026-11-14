@@ -73,7 +73,8 @@ describe("event-mapper protocol suite", () => {
       },
     };
     const completedActivities = mapSessionUpdate(completedNotice, tracker);
-    expect(completedActivities.length).toBe(0);
+    expect(completedActivities.length).toBe(1);
+    expect(completedActivities[0].text).toContain("✅ [步骤 #1 完成]");
 
     // Failed state surfaces alert
     const failedNotice: any = {

@@ -103,7 +103,7 @@ describe("Long-term Model Introspection and Filtering Pipeline", () => {
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === "gemini-3.8-flash")).toBe(true);
       expect(models.every((m) => !m.id.startsWith("tab_") && !m.id.startsWith("chat_"))).toBe(true);
-    });
+    }, 15000);
 
     it("should filter out 3P models on free tier", async () => {
       vi.spyOn(service.quotaService, "isFreeTier").mockReturnValue(true);

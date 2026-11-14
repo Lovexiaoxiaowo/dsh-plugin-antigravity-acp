@@ -102,8 +102,8 @@ export declare class DshSessionManager {
         mimeType: string;
     }>>;
     /**
-     * Attaches a concise instruction guardrail to prevent the autonomous agent
-     * from spiraling into unrequested 50+ step filesystem/command explorations for simple Q&A.
+     * Preserves authentic user instructions without appending negative tool guardrails,
+     * unleashing Antigravity's proactive codebase exploration and reasoning capabilities.
      */
     attachToolGuardrail(blocks: Array<{
         type: "text";

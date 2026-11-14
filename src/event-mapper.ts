@@ -319,8 +319,18 @@ export function mapSessionUpdate(
         ];
       }
 
-      // Suppress noisy completion banners to preserve clean DSH native interface style
-      return [];
+      const titlePart = (displayTitle && displayTitle !== stepLabel) ? ` \`${displayTitle}\`` : "";
+      const details = formatToolContent(update.content);
+      const preview = details ? ` (${details.slice(0, 80).replace(/\r?\n/g, " ")})` : "";
+      return [
+        {
+          type: "tool",
+          text: `  └─ ✅ [${stepLabel} 完成]${titlePart}${preview}\n`,
+          toolCallId: toolId,
+          name: toolName,
+          isStart: false,
+        },
+      ];
     }
 
     case "plan":

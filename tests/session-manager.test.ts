@@ -410,11 +410,11 @@ a1
 \`\`\`\` q2`,
     };
 
-    // Warm session: should return q2 with the anti-sprawl tool guardrail
+    // Warm session: should return q2 without negative tool guardrails
     const warmBlocks = await mgr.preparePromptPayload([embeddedMsg], false);
     expect(warmBlocks.length).toBe(1);
     expect((warmBlocks[0] as any).text).toContain("q2");
-    expect((warmBlocks[0] as any).text).toContain("[Instruction]: Answer directly");
+    expect((warmBlocks[0] as any).text).not.toContain("[Instruction]: Answer directly");
 
     // New session: should reconstruct structured history with q1 and a1, followed by [Current Turn: User Query]
     const newBlocks = await mgr.preparePromptPayload([embeddedMsg], true);

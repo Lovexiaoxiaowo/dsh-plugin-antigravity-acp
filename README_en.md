@@ -7,7 +7,7 @@
 [English](README_en.md) · [简体中文](README.md)
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
-[![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.3.0-brightgreen.svg)](package.json)
 [![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.9.0-purple.svg)](https://github.com/agentclientprotocol)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 

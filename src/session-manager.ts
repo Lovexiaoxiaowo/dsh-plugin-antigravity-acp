@@ -876,21 +876,12 @@ export class DshSessionManager {
   }
 
   /**
-   * Attaches a concise instruction guardrail to prevent the autonomous agent
-   * from spiraling into unrequested 50+ step filesystem/command explorations for simple Q&A.
+   * Preserves authentic user instructions without appending negative tool guardrails,
+   * unleashing Antigravity's proactive codebase exploration and reasoning capabilities.
    */
   attachToolGuardrail(
     blocks: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>
   ): Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
-    const textIdx = blocks.findIndex((b) => b.type === "text");
-    const guardrail =
-      "\n\n[Instruction]: Answer directly and concisely based on context and knowledge. Do NOT perform unsolicited multi-step filesystem scans or command explorations unless explicitly requested by the user.";
-    if (textIdx >= 0) {
-      const current = blocks[textIdx] as { type: "text"; text: string };
-      if (current.text && !current.text.includes("[Instruction]: Answer directly")) {
-        blocks[textIdx] = { ...current, text: current.text + guardrail };
-      }
-    }
     return blocks;
   }
 

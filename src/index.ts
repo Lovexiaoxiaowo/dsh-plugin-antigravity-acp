@@ -765,12 +765,9 @@ export class DshAntigravityService {
       }
     // Format prompt preserving multimodal blocks and history if session was recreated/new
     let promptPayload: string | any[] = "";
-    const toolGuardrailText =
-      "\n\n[Instruction]: Answer directly and concisely based on context and knowledge. Do NOT perform unsolicited multi-step filesystem scans or command explorations unless explicitly requested by the user.";
     if (typeof input === "string") {
       const cleaned = this.sessionManager.cleanUserQuery(input);
-      const base = cleaned || input;
-      promptPayload = base + toolGuardrailText;
+      promptPayload = cleaned || input;
     } else if (Array.isArray(input)) {
       promptPayload = await this.sessionManager.preparePromptPayload(
         input,
@@ -780,8 +777,7 @@ export class DshAntigravityService {
     } else {
       const raw = String(input);
       const cleaned = this.sessionManager.cleanUserQuery(raw);
-      const base = cleaned || raw;
-      promptPayload = base + toolGuardrailText;
+      promptPayload = cleaned || raw;
     }
 
     const listenerKey = `stream-${Date.now()}-${Math.random()}`;

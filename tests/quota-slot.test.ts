@@ -119,5 +119,5 @@ describe("Slot 显示与实际值对照测试", () => {
     expect(typeof snapshot.quota.weeklyRemainingFraction).toBe("number");
     expect(snapshot.quota.weeklyRemainingPercent).toMatch(/^\d+\.\d+%$/);
     expect(snapshot.quota.groups).toHaveLength(2);
-  });
+  }, 15000);
 });

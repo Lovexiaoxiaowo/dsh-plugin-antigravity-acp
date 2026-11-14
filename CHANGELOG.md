@@ -2,6 +2,15 @@
 
 All notable changes to `dsh-plugin-antigravity-acp` will be documented in this file.
 
+## [1.3.0] - 2026-11-14
+
+### Changed
+- **彻底拆除消极防暴走脚镣 (`attachToolGuardrail`)**：
+  - 彻底移除了原作者在每个用户 Prompt 末尾强制追加的限制性警告（`Do NOT perform unsolicited filesystem scans`），彻底释放 Gemini 3.8 Flash 在主会话中自主探查项目、检索符号、阅读代码与排查系统的原生工程能力。
+- **工具调用轨迹全透明反馈 (`tool_call_update`)**：
+  - 取消了成功工具调用的静默吞噬，工具执行成功时以 `✅ [完成] (简要结果摘要)` 实时上报，让用户清晰获悉每一次读取、搜索与命令执行的落地事实，消除黑盒疑虑。
+
+
 ## [1.2.0] - 2026-11-14
 
 ### Added
