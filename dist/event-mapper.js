@@ -114,6 +114,91 @@ function formatArguments(args) {
     }
     return String(args);
 }
+export function extractSubagentPayload(update) {
+    if (!update || update.sessionUpdate !== "tool_call") {
+        return null;
+    }
+    const name = String(update.name || "").toLowerCase();
+    const title = String(update.title || "").toLowerCase();
+    if (name === "run_command" || title === "run_command") {
+        return null;
+    }
+    let raw = update.rawInput ?? update.arguments ?? update.input ?? update.args;
+    if (typeof raw === "string") {
+        try {
+            raw = JSON.parse(raw);
+        }
+        catch { }
+    }
+    const isSubagentIdentifier = (str) => {
+        if (!str)
+            return false;
+        const norm = str.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return (norm.includes("subagent") ||
+            norm.includes("swarm") ||
+            norm.includes("delegate"));
+    };
+    const hasIdentifier = isSubagentIdentifier(name) ||
+        isSubagentIdentifier(title) ||
+        (raw && typeof raw === "object" && (raw.toolAction || raw.toolSummary) && (isSubagentIdentifier(String(raw.toolAction || "")) ||
+            isSubagentIdentifier(String(raw.toolSummary || ""))));
+    if (raw && typeof raw === "object") {
+        let subagents = raw.Subagents ?? raw.subagents;
+        if (typeof subagents === "string") {
+            try {
+                subagents = JSON.parse(subagents);
+            }
+            catch { }
+        }
+        if (Array.isArray(subagents) && subagents.length > 0) {
+            const tasks = subagents.map((item) => {
+                if (typeof item === "string") {
+                    return { Prompt: item };
+                }
+                return {
+                    Role: item?.Role || item?.role || undefined,
+                    Prompt: item?.Prompt || item?.prompt || undefined,
+                };
+            });
+            return { tasks };
+        }
+        if (Array.isArray(raw.tasks) && raw.tasks.length > 0) {
+            const tasks = raw.tasks.map((item) => {
+                if (typeof item === "string") {
+                    return { Prompt: item };
+                }
+                return {
+                    Role: item?.Role || item?.role || undefined,
+                    Prompt: item?.Prompt || item?.prompt || undefined,
+                };
+            });
+            return { tasks };
+        }
+        if (raw.brief || raw.prompt) {
+            if (hasIdentifier) {
+                return {
+                    tasks: [
+                        {
+                            Role: raw.Role || raw.role || update.name || "Worker",
+                            Prompt: raw.brief || raw.prompt,
+                        },
+                    ],
+                };
+            }
+        }
+    }
+    if (hasIdentifier) {
+        return {
+            tasks: [
+                {
+                    Role: update.name || update.title || "Subagent",
+                    Prompt: formatArguments(update.arguments || update.rawInput),
+                },
+            ],
+        };
+    }
+    return null;
+}
 export function mapSessionUpdate(notification, stepTracker) {
     const update = notification?.update;
     if (!update)
@@ -133,12 +218,8 @@ export function mapSessionUpdate(notification, stepTracker) {
             const toolName = clean(update.name || update.title || "antigravity-tool");
             const { stepLabel, displayTitle } = parseToolMeta(toolId, update.title, update.name, stepTracker);
             const argsStr = formatArguments(update.arguments);
-            const isRunCommand = Boolean(update.arguments?.CommandLine ||
-                (update.name && String(update.name).toLowerCase() === "run_command") ||
-                (update.title && String(update.title).toLowerCase() === "run_command"));
-            const hasSubagentsArg = Boolean(update.arguments && (Array.isArray(update.arguments.Subagents) ||
-                Array.isArray(update.arguments.subagents) ||
-                update.arguments.brief));
+            const subagentPayload = extractSubagentPayload(update);
+            const isSubagent = Boolean(subagentPayload);
             let parsedArgs = update.arguments ?? update.rawInput ?? update.input ?? update.args;
             if (typeof parsedArgs === "string") {
                 try {
@@ -160,19 +241,6 @@ export function mapSessionUpdate(notification, stepTracker) {
                     catch { }
                 }
             }
-            const isSubagentIdentifier = (str) => {
-                if (!str)
-                    return false;
-                const norm = str.toLowerCase().replace(/[^a-z0-9]/g, "");
-                return (norm.includes("subagent") ||
-                    norm.includes("swarm") ||
-                    norm.includes("delegate"));
-            };
-            const isSubagent = !isRunCommand && (hasSubagentsArg ||
-                isSubagentIdentifier(String(update.name || "")) ||
-                isSubagentIdentifier(String(update.title || "")) ||
-                isSubagentIdentifier(String(displayTitle || "")) ||
-                isSubagentIdentifier(toolName));
             const targetName = (displayTitle && displayTitle !== stepLabel) ? displayTitle : toolName;
             const argPreview = argsStr ? ` (${argsStr})` : "";
             const text = isSubagent
@@ -188,6 +256,7 @@ export function mapSessionUpdate(notification, stepTracker) {
                     rawArgs: parsedArgs,
                     isStart: true,
                     isSubagent,
+                    subagentPayload: subagentPayload || undefined,
                 },
             ];
         }

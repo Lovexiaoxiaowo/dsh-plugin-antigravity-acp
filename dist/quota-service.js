@@ -24,8 +24,7 @@ export function formatFractionPercent(fraction) {
     const p = fraction * 100;
     // If slightly consumed, do not round up to 100.0% to avoid illusion of non-responsive quota
     if (p > 99.0 && p < 100.0) {
-        const f = p.toFixed(2);
-        return `${f === "100.00" ? "99.99" : f}%`;
+        return "99.9%";
     }
     return `${p.toFixed(1)}%`;
 }

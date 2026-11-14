@@ -11,6 +11,13 @@ export declare class AcpStepTracker {
     getStepNumber(toolCallId: string): number;
     reset(): void;
 }
+export interface SubagentPayload {
+    tasks: Array<{
+        Role?: string;
+        Prompt?: string;
+    }>;
+}
+export declare function extractSubagentPayload(update: any): SubagentPayload | null;
 export declare function mapSessionUpdate(notification: SessionNotification, stepTracker?: AcpStepTracker): AcpActivity[];
 /**
  * High-reliability event writer emitting valid DSH StreamChunk sequences.

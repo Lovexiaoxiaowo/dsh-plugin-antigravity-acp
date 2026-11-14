@@ -136,6 +136,12 @@ export type AcpActivity = {
     args?: string;
     isStart?: boolean;
     isSubagent?: boolean;
+    subagentPayload?: {
+        tasks: Array<{
+            Role?: string;
+            Prompt?: string;
+        }>;
+    };
     rawArgs?: any;
 } | {
     type: "plan";

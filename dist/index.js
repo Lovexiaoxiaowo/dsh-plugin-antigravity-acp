@@ -176,6 +176,8 @@ export class DshAntigravityService {
     quotaService = new AntigravityQuotaService(this.sessionManager);
     promptSemaphore = new AsyncSemaphore(2);
     attachmentStore = null;
+    approvalService = null;
+    compactionService = null;
     /**
      * Reads genuine, authoritative turn-level token counts directly from
      * the Antigravity runtime transcript (.system_generated/logs/transcript.jsonl).
@@ -223,6 +225,12 @@ export class DshAntigravityService {
     }
     setAttachmentStore(store) {
         this.attachmentStore = store;
+    }
+    setApprovalService(service) {
+        this.approvalService = service;
+    }
+    setCompactionService(service) {
+        this.compactionService = service;
     }
     async resolveAttachment(attachmentRef) {
         if (!this.attachmentStore || typeof this.attachmentStore.readImage !== "function")
@@ -283,6 +291,35 @@ export class DshAntigravityService {
                     }
                 },
                 onRequestPermission: async (req) => {
+                    // If DSH interactive approval service is available and permissionMode is not yolo:
+                    if (this.approvalService && this.config.permissionMode !== "yolo") {
+                        try {
+                            if (typeof this.approvalService.ask === "function") {
+                                const desc = req.toolCall?.title ||
+                                    req.toolCall?.name ||
+                                    req.description ||
+                                    "Google Antigravity Agent 请求工具操作权限";
+                                const outcome = await this.approvalService.ask({
+                                    description: desc,
+                                    toolCall: req.toolCall,
+                                    options: req.options,
+                                });
+                                if (outcome === "allowed-once" || outcome === "allowed-always") {
+                                    const allowOpt = req.options?.find((opt) => opt.optionId.includes("allow") || opt.optionId.includes("yes")) ||
+                                        req.options?.[0];
+                                    if (allowOpt) {
+                                        return { outcome: { outcome: "selected", optionId: allowOpt.optionId } };
+                                    }
+                                }
+                                else if (outcome === "rejected") {
+                                    return { outcome: { outcome: "cancelled" } };
+                                }
+                            }
+                        }
+                        catch (err) {
+                            console.warn("[antigravity-acp] approvalService prompt skipped/failed:", err);
+                        }
+                    }
                     const allowOption = req.options?.find((opt) => opt.optionId.includes("allow") || opt.optionId.includes("yes")) ||
                         req.options?.[0];
                     if (allowOption) {
@@ -873,6 +910,15 @@ export class DshAntigravityService {
         const cwd = options?.cwd || process.cwd();
         const model = options?.model || this.config.defaultModel || "gemini-3.8-flash";
         const reasoningEffort = options?.reasoningEffort || this.config.reasoningEffort || "high";
+        if (options?.signal?.aborted) {
+            return {
+                success: false,
+                output: "",
+                model,
+                durationMs: 0,
+                error: "Antigravity 委派任务在启动前已取消",
+            };
+        }
         if (!this.isLoggedIn()) {
             return {
                 success: false,
@@ -891,6 +937,10 @@ export class DshAntigravityService {
             }
             // Create an isolated subtask session
             const { sessionId } = await this.createSession(cwd, { model, reasoningEffort });
+            const cancelSession = () => {
+                this.cancel(sessionId).catch(() => { });
+            };
+            options?.onCancel?.(cancelSession);
             let collectedOutput = "";
             let collectedReasoning = "";
             const stepTracker = new AcpStepTracker();
@@ -911,6 +961,7 @@ export class DshAntigravityService {
                     }
                 }
             });
+            let abortListener = null;
             try {
                 const timeoutMs = options?.timeoutMs || 300_000;
                 const cleanedPrompt = this.sessionManager.cleanUserQuery(prompt) || prompt;
@@ -918,11 +969,20 @@ export class DshAntigravityService {
                 const timeoutPromise = new Promise((_, reject) => {
                     const t = setTimeout(() => {
                         clearTimeout(t);
-                        this.cancel(sessionId).catch(() => { });
+                        cancelSession();
                         reject(new Error(`Antigravity 委派任务执行超时 (超过 ${timeoutMs / 1000}s)`));
                     }, timeoutMs);
                 });
-                await Promise.race([promptPromise, timeoutPromise]);
+                const abortPromise = new Promise((_, reject) => {
+                    if (options?.signal) {
+                        abortListener = () => {
+                            cancelSession();
+                            reject(new Error("Antigravity 委派任务已取消 (Aborted)"));
+                        };
+                        options.signal.addEventListener("abort", abortListener, { once: true });
+                    }
+                });
+                await Promise.race([promptPromise, timeoutPromise, abortPromise]);
                 return {
                     success: true,
                     output: collectedOutput.trim() || "（任务已由 Antigravity 代理执行完毕，未生成额外文本）",
@@ -932,6 +992,9 @@ export class DshAntigravityService {
                 };
             }
             finally {
+                if (options?.signal && abortListener) {
+                    options.signal.removeEventListener("abort", abortListener);
+                }
                 this.notificationListeners.delete(listenerKey);
                 this.cancel(sessionId).catch(() => { });
             }
@@ -986,6 +1049,22 @@ export function apply(ctx, config = {}) {
         ctx.inject(["attachments"], (scope) => {
             if (scope?.attachments) {
                 service.setAttachmentStore(scope.attachments);
+            }
+        });
+    }
+    // 1.6. Inject approval service for interactive user permission prompts:
+    if (typeof ctx.inject === "function") {
+        ctx.inject(["approval"], (scope) => {
+            if (scope?.approval) {
+                service.setApprovalService(scope.approval);
+            }
+        });
+    }
+    // 1.7. Inject compaction service for context pruning & session compact coordination:
+    if (typeof ctx.inject === "function") {
+        ctx.inject(["compaction"], (scope) => {
+            if (scope?.compaction) {
+                service.setCompactionService(scope.compaction);
             }
         });
     }
@@ -1224,6 +1303,93 @@ export function apply(ctx, config = {}) {
             }
             catch (error) {
                 console.error(`[antigravity-acp] llm adapter registration skipped: ${error}`);
+            }
+        });
+    }
+    // 4. Register DSH Native Subagent Provider:
+    // Enables DSH Coordinator, /swarm, and /teamwork to dispatch heavy tasks natively to Antigravity
+    if (typeof ctx.inject === "function") {
+        ctx.inject(["subagents"], (scope) => {
+            try {
+                if (typeof scope?.subagents?.registerProvider === "function") {
+                    const createAntigravityProvider = (providerName) => ({
+                        name: providerName,
+                        capabilities: {
+                            agentOptions: false,
+                            outputSchema: false,
+                            depthLimit: false,
+                            toolFilter: false,
+                            persona: false,
+                        },
+                        inheritsParentContext: false,
+                        start: (request) => {
+                            if (request?.signal?.aborted) {
+                                throw new Error(`Subagent request was aborted before ${providerName} started`);
+                            }
+                            const promptText = Array.isArray(request?.prompt)
+                                ? request.prompt
+                                    .filter((p) => p && p.type === "text")
+                                    .map((p) => p.text || "")
+                                    .join("\n")
+                                : typeof request?.prompt === "string"
+                                    ? request.prompt
+                                    : "";
+                            const cwd = request?.parent?.session?.header?.cwd || process.cwd();
+                            const model = request?.agentOptions?.model || undefined;
+                            const runId = request?.descriptor?.sessionId || `ag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                            const resultPromise = (async () => {
+                                try {
+                                    const execRes = await service.executeDelegatedTask(promptText, {
+                                        cwd,
+                                        model,
+                                        signal: request?.signal,
+                                    });
+                                    if (request?.signal?.aborted) {
+                                        return {
+                                            output: [{ type: "text", text: execRes.output || "Task aborted." }],
+                                            stopReason: "aborted",
+                                        };
+                                    }
+                                    if (!execRes.success) {
+                                        return {
+                                            output: [{ type: "text", text: execRes.output || "" }],
+                                            diagnostic: execRes.error || "Antigravity subagent task execution failed",
+                                            stopReason: "error",
+                                        };
+                                    }
+                                    return {
+                                        output: [{ type: "text", text: execRes.output }],
+                                        stopReason: "completed",
+                                    };
+                                }
+                                catch (err) {
+                                    if (request?.signal?.aborted) {
+                                        return {
+                                            output: [{ type: "text", text: "Task aborted." }],
+                                            stopReason: "aborted",
+                                        };
+                                    }
+                                    return {
+                                        output: [{ type: "text", text: "" }],
+                                        diagnostic: err?.message || String(err),
+                                        stopReason: "error",
+                                    };
+                                }
+                            })();
+                            return {
+                                id: runId,
+                                localAgent: undefined,
+                                result: resultPromise,
+                                dispose: async () => { },
+                            };
+                        },
+                    });
+                    scope.subagents.registerProvider(createAntigravityProvider("antigravity"));
+                    scope.subagents.registerProvider(createAntigravityProvider("antigravity-acp"));
+                }
+            }
+            catch (error) {
+                console.error(`[antigravity-acp] subagents provider registration skipped: ${error}`);
             }
         });
     }

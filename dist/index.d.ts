@@ -72,6 +72,8 @@ export declare class DshAntigravityService {
     readonly quotaService: AntigravityQuotaService;
     readonly promptSemaphore: AsyncSemaphore;
     private attachmentStore;
+    private approvalService;
+    private compactionService;
     /**
      * Reads genuine, authoritative turn-level token counts directly from
      * the Antigravity runtime transcript (.system_generated/logs/transcript.jsonl).
@@ -79,6 +81,8 @@ export declare class DshAntigravityService {
     private extractLastStepTokensFromTranscript;
     getClient(): AntigravityAcpClient | null;
     setAttachmentStore(store: any): void;
+    setApprovalService(service: any): void;
+    setCompactionService(service: any): void;
     resolveAttachment(attachmentRef: any): Promise<{
         data: string;
         mimeType: string;
@@ -176,6 +180,8 @@ export declare class DshAntigravityService {
         model?: string;
         reasoningEffort?: ReasoningEffort;
         timeoutMs?: number;
+        signal?: AbortSignal;
+        onCancel?: (cancelFn: () => void) => void;
     }): Promise<{
         success: boolean;
         output: string;
