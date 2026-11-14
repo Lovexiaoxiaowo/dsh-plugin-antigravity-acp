@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureAntigravityServer } from "./bootstrapper.js";
 import { hasLocalCredentials, clearLocalCredentials, getFreshAccessToken } from "./auth.js";
 import { AntigravityAcpClient } from "./acp-client.js";
@@ -296,7 +297,10 @@ export class DshAntigravityService {
   }
 
   constructor(private readonly config: AntigravityPluginConfig = {}) {
-    this.projectRoot = path.resolve(import.meta.dirname, "..");
+    const currentDir =
+      (import.meta as any).dirname ||
+      path.dirname(fileURLToPath(import.meta.url));
+    this.projectRoot = path.resolve(currentDir, "..");
     this.wasLoggedIn = this.isLoggedIn();
   }
 

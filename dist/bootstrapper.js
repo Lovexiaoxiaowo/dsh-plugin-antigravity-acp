@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import https from "node:https";
 import crypto from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 /**
  * Resolves current host OS and architecture into standard manifest platform key.
  */
@@ -147,10 +147,20 @@ function computeFileSha256(filePath) {
 }
 function extractZip(zipFilePath, targetDir) {
     if (process.platform === "win32") {
-        execSync(`powershell -NoProfile -Command "Expand-Archive -Path '${zipFilePath}' -DestinationPath '${targetDir}' -Force"`, { stdio: "ignore" });
+        execFileSync("powershell.exe", [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Expand-Archive",
+            "-LiteralPath",
+            zipFilePath,
+            "-DestinationPath",
+            targetDir,
+            "-Force",
+        ], { stdio: "ignore" });
     }
     else {
-        execSync(`unzip -o -q "${zipFilePath}" -d "${targetDir}"`, { stdio: "ignore" });
+        execFileSync("unzip", ["-o", "-q", zipFilePath, "-d", targetDir], { stdio: "ignore" });
     }
 }
 //# sourceMappingURL=bootstrapper.js.map
