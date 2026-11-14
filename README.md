@@ -2,241 +2,146 @@
 
 # dsh-plugin-antigravity-acp
 
-**DeepSeek Harness (DSH) 插件：通过 Google ACP 协议接入 Antigravity 运行时与 Gemini 3.x 模型**
+**DeepSeek Harness (DSH) 扩展插件：深度接驳 Google Antigravity ACP 运行时与 Gemini 3.x 高推理模型矩阵**
 
 [简体中文](README.md) · [English](README_en.md)
 
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blue.svg)](https://github.com/deepseek-ai)
+[![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)](package.json)
+[![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.9.0-purple.svg)](https://github.com/agentclientprotocol)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.0-brightgreen.svg)](package.json)
-[![ACP SDK](https://img.shields.io/badge/@agentclientprotocol/sdk-v1.8.0-purple.svg)](https://github.com/agentclientprotocol)
 
 </div>
 
 ---
 
-## 简介
+## 💡 项目简介
 
-`dsh-plugin-antigravity-acp` 是 DeepSeek Harness (DSH) 的扩展插件。通过标准的 ACP (Agent Client Protocol) 协议连接 Google Antigravity 运行时，让 DSH 可以直接调用 Gemini 3.8 Flash 模型。
+`dsh-plugin-antigravity-acp` 是专为 **DeepSeek Harness (DSH)** 打造的核心能力扩展插件。基于标准 **Agent Client Protocol (ACP)** 协议深度连接 Google Antigravity 本地运行时。
 
-插件自带设置页面和后台服务，安装后通过 Google 官方 OAuth 授权登录即可使用，支持思维链推理展开、流式输出、输入框左侧额度与 1M 上下文实时看板、ACP 思考轨迹与计划同步，以及跨进程失效透明自愈。
-
----
-
-## 特性
-
-- **输入框模型旁额度与 Context 看板**：在聊天窗口底部模型选择框左侧常驻展示额度胶囊（`⚡ 5h 95% | 上下文 7.2%`），悬停自动展开 Popover 浮层，鼠标移出 300ms 平滑隐藏，避免遮挡聊天输入区。
-- **5 小时滚动周期与倒计时**：清晰呈现 Google 官方独特的 5 小时动态滑动窗口（5-Hour Rolling Window）机制与精准重置倒计时，解除周重置误解。
-- **1M 上下文占用与超限告警**：基于 Gemini 3.8 Flash 的 1,048,576 Token 上限，实时计算已占比例；当超过 75% 时主动呈现高危黄色/红色警示卡片，提醒及时归档或压缩会话。
-- **DSH 轨迹原生工具调用发射**：重构流式事件映射器，完整实现 DSH 官方原生的 `block-start` (`blockType: 'tool-call'`)、`tool-call-delta` 与 `block-end` 协议，彻底解决 DSH 轨迹看板中「0 工具调用」统计缺失的问题，工具名与参数清晰可查。
-- **ACP 轨迹跟踪与思维链**：将 ACP 运行时的思考过程（Reasoning Delta）、工具执行（Tool Calls）、代码补丁（Diff）与计划（Plan）完整映射并流入 DSH 思考链与轨迹面板，调试排错一目了然。
-- **上下文自动保全与系统时间戳穿透**：智能识别并穿透 DSH 系统注入消息（如 `@deepseek-ai/dsh-time-context` 时间戳），精准提纯用户真实提问，彻底解决多轮对话历史丢失或答非所问问题。
-- **跨进程会话失效透明自愈（Auto-Recovery）**：当遇到 DSH 客户端退出重启、服务重启或服务端 Session 过期（`Session not found / code: -32603`）时，自动静默创建新会话并打包前序历史完成重试，无感自愈，彻底杜绝 `Internal error` 报错。
-- **自带设置界面**：安装后自动在 DSH【设置】->【插件】顶部注入专属「Google Antigravity」标签页，并在设置侧边栏提供独立入口，无需手动修改配置文件。
-- **自动下载官方运行时**：无需手动安装 Python、GCC 或配置编译环境。首次运行时自动识别系统（Windows / macOS / Linux），从 Google 官方 CDN 下载对应架构的 `agy_acp_server` 并校验 SHA256。
-- **官方 OAuth 2.0 个人授权**：支持 ACP `oauth-personal` 流程。点击登录后调用系统默认浏览器打开 Google 官方页面授权，无需手动抓取 Cookie 或填写 API Key，插件不接触账号密码明文。
-- **本地存储与隐私安全**：无第三方中转服务器，无遥测埋点。授权凭证仅保存在本机 `~/.gemini/antigravity-acp/` 目录，请求由本地进程直连 Google 官方接口。
+不同于将外部 Agent 强行作为普通 LLM 的简易方案，本插件深度接驳了 DSH 官方的核心能力规范——将 Antigravity 作为 **DSH 原生子代理（Native Subagent Provider）**，支持被 DSH 协调器、`/swarm` 和 `/teamwork` 原生调度分发，同时接驳宿主**交互式权限审批（Interactive Approval）**，实现强推理能力与安全治理的双重闭环。
 
 ---
 
-## 版本更新日志 (Changelog)
+## 🚀 核心特性
 
-### v1.1.0 (2026-10-31)
-- **全量解锁 Google Antigravity 官方模型矩阵（Full Model Matrix Matrix Unlock）**：
-  - 重构模型注册机制，解除单一模型硬编码限制，支持完整 9 款核心旗舰模型（Gemini 3.8 Flash、Gemini 2.5 Pro、Gemini 2.5 Flash Thinking、Gemini 3.5 Flash Lite、Claude Opus 4.6 Thinking、Claude Sonnet 4.6、GPT-OSS 120B 等）；
-  - 支持动态上游端点探针与标准矩阵自动合并排重，无缝透传 ACP 多模型切换选项。
-- **Token 记账、真实上下文比例与缓存精度校准（Accurate Context & Token Accounting）**：
-  - 修复 0% 上下文比例异常计算，消除伪缓存失真，确保 5H 滑动窗口与周配额真实精准呈现。
-- **生产级架构加固与韧性管道（Architecture Hardening & Resilience Pipeline）**：
-  - 落地流式传输背压水线保护（Backpressure Guard），防止海量数据冲击；
-  - 引入配额 429 断路器与超时熔断；实现异步防抖与原子级安全会话持久化。
-
-### v1.0.15 (2026-10-31)
-- **架构加固与生产级管道背压保护**：
-  - 完成全面架构审计加固，集成流式队列高低水位保护与会话原子持久化；
-  - 构建全链路单元测试套件（32 个全绿 Vitest 用例）。
-
-### v1.0.14 (2026-10-31)
-- **Token 暴涨与 49% 缓存命中率失真根治（Token Multiplier & Cache Accounting Fix）**：
-  - 阻断流式中间工具步高频发射全局 `usage` 数据块，解决 DSH `addUsage` 累加器将单步累积水位重复叠加数十次导致单轮飙升 10M+、全会话虚增至 120M 的假账问题；
-  - 修正底层 Token 记账算式（`total = input + output`，剔除把 `cachedTokens` 作为独立加数的双重叠加），恢复真实 **85%~95%+** 缓存命中率。
-- **历史上下文脱敏与工具输出折叠（Context De-bloating & Pruning）**：
-  - 历史回溯自动折叠既往 Assistant 轮次中动辄数千行的原生工具控制台输出代码块（`> \`\`\`...`），防止多轮历史滚雪球式打爆上下文；
-  - 纯化用户真实提问，剔除 DSH `<USER_REQUEST>` 冗余标签与空转时间戳元数据。
-- **真实周配额接口对接与木桶短板约束（Official Quota & Constrained Engine）**：
-  - 对接 Google 官方主力端点 `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`（带多级备用降级），淘汰假数据与硬编码；
-  - 参考 `Antigravity-Manager` 机制，实现 5H 削峰速率窗口与 7 天周配额的双向木桶短板约束、周总额度熔断（`isWeeklyExhausted`）与 5H 冷却标识（`is5hCooling`）；
-  - 悬浮卡片中呈现 **🔷 Gemini 官方核心模型池** 与 **🟣 Claude & GPT 托管模型池** 全量分组健康看板。
-
-### v1.0.13 (2026-10-31)
-- **浅色与深色模式自适应适配（Light & Dark Theme Parity）**：
-  - 重构底栏状态胶囊（Pill）与悬浮框 Popover 的全部样式 token，全面对齐 DSH 官方规范（`--dsw-alias-label-primary`、`--dsw-alias-label-secondary`、`--dsw-alias-fill-tsp-*`）；
-  - 彻底修复在 DSH 浅色主题下文字发白、5H与周配额看不清、悬浮框卡片与进度条槽底隐形的问题，深浅色主题自由无缝切换。
-- **全模态多模态视觉图片识别支持（Vision / Multimodal Support）**：
-  - 在模型声明中正式开启多模态输入能力（`inputModalities: ["text", "image"]`），彻底消除 DSH 发送图片时「当前模型不支持图片」的拦截提示；
-  - 后端打通 DSH `attachments` 服务与 ACP `ContentBlock::Image` 传输链路，支持通过拖拽、点击上传和剪贴板粘贴向 Gemini 3.8 Flash 发送图片进行视觉理解与问答，与官方 `antigravity.exe` 完全一致。
-
-### v1.0.12 (2026-10-31)
-- **工具调用步骤序号归一化**：
-  - 引入 `AcpStepTracker`，将 Antigravity ACP 内部的轨迹步数（底层将首轮初始分析作为 Step 1，首个工具作为 Step 2）按用户交互轮次统一规整为从直观的 `[步骤 #1]` 开始自增计数；
-  - 保证工具执行与状态更新严格对齐 `[步骤 #N]` 与 `[步骤 #N 完成]`。
-- **Slot 精简（仅保留底栏 Dock）**：
-  - 移除输入框控制栏内部右侧重复的 slot 挂载，仅保留最下方状态底栏（`conversation.composer.dock`）的单胶囊展示，界面清爽统一。
-- **额度展示深度优化（对标 GitHub 社区主流项目）**：
-  - 彻底移除冗余的上下文百分比（`上下文 100%`）与 1M 上下文占用进度条、警报及 Token 记账卡片；
-  - 胶囊与 Popover 浮层全面聚焦双重配额：**5小时滑动速率窗口**（实时百分比、进度条、平滑恢复倒计时）与 **7天自然周配额**（周重置时间点与剩余倒计时看板）。
-
-### v1.0.10 (2026-10-30)
-- **新增周额度结算时间与倒计时看板**：
-  - 后端实现 Google 官方自然周结算点（每周一 00:00 UTC / 北京时间周一 08:00）精准算法，输出自然周重置倒计时（`X天X小时X分`）；
-  - 额度 Popover 浮层升级为「5小时滑动速率窗口」与「自然周额度重置」双重周期看板。
-- **全状态常驻双 Slot 挂载（解决额度面板被隐藏问题）**：
-  - 除了输入框右侧（`conversation.input.right`）外，同时挂载到 DSH 底栏状态条（`conversation.composer.dock`）；
-  - 彻底解决任务运行/深度求索期间（`activity === true`）输入框控制组被 DSH `hidden: activity` 隐藏导致胶囊不可见的问题，全生命周期常驻可见。
-- **方案 A 结构化思维链与防 Token 爆炸护甲**：
-  - 优化 Antigravity 自治 Agent 的工具调度、参数摘要与代码 diff 的卡片式结构化输出；
-  - 增设工具超长输出熔断保护（单工具最大 1,200 字符限制），自动截断冗余文本，杜绝巨量长命令输出打爆会话 Token 与 API 网关长连接。
-
-### v1.0.9 (2026-10-30)
-- **修复工具调用导致的 `unknown tool` 异常与报告消失**：
-  - 彻底阻断对外层 DSH 调度器发射未注册工具块（`blockType: 'tool-call'`），将 ACP 内部工具执行完整收拢流入思维链轨迹；
-  - 彻底修复 `DshStreamWriter` 状态机 Block Index 冲突，防止 index: 1 文本槽位被冲刷覆盖；
-  - 解决 PTC 模式下因宿主调度失败导致的多轮空转死循环与 5M+ Token 异常消耗。
-
-### v1.0.8 (2026-10-30)
-- **工具调用原生轨迹发射**：重构 `DshStreamWriter`，实现官方 `blockType: 'tool-call'` 结构化流式发射，修复 DSH 轨迹看板中工具调用显示为 0、无详细工具名和参数的问题。
-- **浮层交互易用性提升**：浮窗支持鼠标离开 300ms 后平滑自动隐藏；底栏胶囊支持悬停自动展开，彻底杜绝浮窗遮挡聊天发送区域。
-- **额度恢复机制详解**：浮窗新增「Google 5 小时动态滑动窗口（5-Hour Rolling Window）」机制卡片与实时重置倒计时，明确非自然周重置规则。
-- **1M 上下文超限健康预警**：当单会话上下文突破 75%（>78万 Tokens）时主动弹出警示卡片，提示 Google API 硬顶崩溃风险与上下文压缩建议。
-
-### v1.0.7 (2026-10-30)
-- **跨进程 Session 失效透明自愈**：解决 DSH 重启或服务端过期导致的 `Session not found / code: -32603` 内部错误。
-- **时间戳穿透与历史净化**：穿透 `@deepseek-ai/dsh-time-context` 注入的消息并纯化真实上下文。
-
-### v1.0.6 (2026-10-30)
-- **输入框模型旁额度与 Context 看板**：首发常驻底栏胶囊，展示 5h 额度、1M 上下文占用比例与输入/输出/思考 Token 记账。
+- **DSH 原生子代理调度 (`ctx.subagents`)**  
+  提供 `antigravity` 与 `antigravity-acp` 原生子代理注册，完整遵循 DSH 官方 `SubagentProvider` 与 `SubagentRun` 规范。自动继承父会话工作区目录（`cwd`）并接驳外部中止信号（`signal`），使 DSH 协调器能直接委派高难度跨文件重构、全库审计等沉重子任务。
+- **宿主级交互权限审批 (`ctx.approval`)**  
+  将 ACP 敏感工具操作（终端执行、文件写入等）上浮至 DSH 原生交互弹窗，支持用户选择单次允许（`allowed-once`）、永久信任或拒绝，告别单方面静默越权。
+- **结构化子任务树投影**  
+  内置 `extractSubagentPayload` 提取器，将 ACP 内部的工具调度、任务分发与 Swarm 载荷结构化投影至 DSH 会话中，呈现清晰的分级执行树。
+- **输入框实时配额看板**  
+  在聊天窗口底栏常驻显示额度状态胶囊（`⚡ 5h 95% | 周重置`），鼠标悬停自动展开 Popover 浮层，直观呈现 Google 独特的 5 小时滑动窗口与自然周配额重置倒计时。
+- **Gemini 3.x / 2.5 官方旗舰模型矩阵**  
+  完整接入 Gemini 3.8 Flash（1M 超长上下文）、Gemini 2.5 Pro、Flash Thinking 等模型，支持完整思维链展开与多模态图片识别理解。
+- **透明自愈与韧性管道**  
+  跨进程会话失效自动无感重建、流式背压水线保护与超时熔断，杜绝空转异常。
+- **零配置与隐私安全**  
+  启动时自动按系统架构（Windows / macOS / Linux）下载并校验 Google 官方二进制；通过官方 OAuth 2.0 登录，授权凭证本地安全保存，请求直接直连 Google 端点，无任何中间服务器或遥测行为。
 
 ---
 
-## 安装
+## 🛠️ 架构协同
 
-### 方式 1：在 DSH 界面中安装（推荐）
+```mermaid
+flowchart LR
+    subgraph DSH [DeepSeek Harness 宿主]
+        Coordinator[DSH 协调器 / Swarm / Chat]
+        ApprovalUI[交互式权限确认弹窗]
+        SessionTree[结构化会话轨迹树]
+    end
 
-1. 打开 DSH 桌面端；
-2. 进入【设置】->【插件】；
-3. 在安装输入框中粘贴仓库地址：
+    subgraph Plugin [Antigravity ACP 插件]
+        SubagentSeam["ctx.subagents ('antigravity')"]
+        ApprovalSeam["ctx.approval.ask"]
+        Mapper[事件解析 & extractSubagentPayload]
+        Service[DshAntigravityService]
+    end
+
+    subgraph Engine [Google Antigravity Runtime]
+        ACP[ACP 本地进程]
+        Gemini[Gemini 3.8 Flash / 2.5 Pro]
+    end
+
+    Coordinator -->|调度子代理| SubagentSeam
+    SubagentSeam --> Service
+    Service -->|会话隔离 & 任务分发| ACP
+    ACP -->|思维链 & 工具调用| Gemini
+
+    ACP -.->|session/request_permission| ApprovalSeam
+    ApprovalSeam --> ApprovalUI
+    ApprovalUI -.->|授权反馈| ACP
+
+    ACP -->|实时事件通知| Mapper
+    Mapper --> SessionTree
+```
+
+---
+
+## 📦 安装与配置
+
+### 方式 1：DSH 客户端界面安装（推荐）
+
+1. 打开 DeepSeek Harness 桌面客户端；
+2. 进入【设置 (Settings)】->【插件 (Plugins)】；
+3. 在插件安装框中输入仓库地址并点击【安装】：
    ```text
    https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp
    ```
-4. 点击【安装】，等待安装完成。
 
----
-
-### 方式 2：通过命令行安装
+### 方式 2：CLI 命令行安装
 
 在终端执行：
-
 ```bash
 dsh plugin add https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp
 ```
 
 ---
 
-## 使用步骤
+## 🏁 快速上手
 
-```mermaid
-flowchart LR
-    A[安装插件] --> B[进入设置 -> Google Antigravity 页面]
-    B --> C[点击【一键登录 Google】完成授权]
-    C --> D[聊天窗口选择 Gemini 3.8 Flash 开始使用]
-    D --> E[查看左侧额度与 1M 上下文胶囊面板]
-```
-
-1. **打开设置面板**：安装完成后，进入 DSH【设置】->【插件】-> 顶部【Google Antigravity】标签页（或左侧导航栏的【Google Antigravity】入口）。
-2. **完成 Google 授权**：在面板中点击【一键登录 Google】，系统会打开浏览器前往 Google 官方登录页。授权完成后返回 DSH，面板会更新为已连接状态。
-3. **选择模型并使用**：新建或打开任意对话，在模型下拉列表中选择 `Gemini 3.8 Flash (Antigravity)`，即可开始对话。
-4. **实时看板交互**：在输入框右下方模型选择器左侧，点击 `⚡ 5h 95% | 上下文 x%` 胶囊，即可随时查看当前额度倒计时与 Token 消耗。
+1. **登录授权**：安装完成后，进入 DSH【设置】->【插件】中的「Google Antigravity」标签页，点击【一键登录 Google】，在浏览器中完成官方个人应用授权。
+2. **日常对话使用**：在任意聊天会话的模型列表中，选择 `Gemini 3.8 Flash (Antigravity)` 即可开始高速长上下文对话。
+3. **子代理协同调度**：在主协调器或 Swarm 会话中，直接调用 Antigravity 执行独立专项任务：
+   ```markdown
+   请让 antigravity 子代理审查并重构当前工程中的解析器模块，输出单元测试用例。
+   ```
 
 ---
 
-## 安全性与方案对比
+## 📋 支持模型一览
 
-| 项目 | 常见网页抓取 / 第三方镜像方案 | 本插件 (dsh-plugin-antigravity-acp) |
-| :--- | :--- | :--- |
-| **接入协议** | 模拟网页请求、逆向非公开接口 | Google 官方规范 ACP (Agent Client Protocol) |
-| **可执行文件** | 来源不明的第三方二进制 | Google 官方 CDN 签名发布 + SHA256 完整性校验 |
-| **认证方式** | 提取 Cookie 或私有 Session Token | Google 官方标准 OAuth 2.0 个人应用授权 |
-| **数据链路** | 经第三方中转服务器，存在泄露风险 | 零中间服务器，本地进程直连 Google 官方接口 |
-| **风控与安全** | 容易触发平台风控导致封号 | 走官方授权通道，正常个人应用调用 |
-
----
-
-## 版本历史 (Changelog)
-
-### v1.0.7
-- **跨进程失效全自动静默自愈**：底层捕获 `Session not found` 及 `-32603` 内部错误时，自动清理陈旧 Session、重新创建 ACP 实例并打包历史重新执行，彻底杜绝客户端重启后的 `Internal error` 报错。
-- **任务防挂起清理**：排查并彻底清除多余后台挂起任务。
-
-### v1.0.6
-- **穿透 DSH 系统时间戳**：精准识别并穿透 `@deepseek-ai/dsh-time-context` 注入的时间消息，锁定用户真实提问，彻底根治“答非所问/上下文错位”问题。
-- **修复 1M 模型匹配与 Token 虚标**：精准过滤 16K 代码补全小模型，准确绑定 1,048,576（1M）真实上下文；修正高频流式通知累加导致的 350 万 Token 虚标与 100% 爆表假象。
-
-### v1.0.5
-- **全新额度与上下文胶囊看板**：在输入框模型下拉框左侧注入原生交互胶囊与 Popover 浮层，提供 5 小时额度滑动窗口、重置倒计时及 Token 明细。
-- **ACP 轨迹映射**：支持将 ACP 的 Plan 规划与 Tool 轨迹流式同步至 DSH 思考链。
-- **持久化会话管理器**：实现 `DshSessionManager`，保障多轮对话连贯。
-
-### v1.0.4 & 早期版本
-- 修复重复标签页唤起与多平台二进制下载自举，支持标准 OAuth 2.0 授权。
+| 模型名称 | 上下文窗口 (Context) | 思维链 (Thinking) | 适用场景 |
+| :--- | :---: | :---: | :--- |
+| **Gemini 3.8 Flash** | 1,048,576 Tokens | ✅ 支持 | 高速编程推理、全工程代码走读、日常主力 |
+| **Gemini 2.5 Pro** | 1,048,576 Tokens | ✅ 支持 | 深度系统架构、疑难 bug 溯源与高复杂度规划 |
+| **Gemini 2.5 Flash Thinking** | 1,048,576 Tokens | ✅ 完整可见 | 细粒度逻辑推演与强可见思考链审计 |
+| **Gemini 3.5 Flash Lite** | 1,048,576 Tokens | ✅ 支持 | 超轻量级高频响应与简单辅助任务 |
+| **Claude Opus / Sonnet (托管)** | 200,000 Tokens | ✅ / ❌ | Google 托管 Claude 系列高精度模型 |
 
 ---
 
-## 常见问题
+## ❓ 常见问题 (FAQ)
 
-### Q1：安装或更新插件后，为什么聊天界面没有出现模型？
-- **原因**：Windows 桌面端点击窗口右上角 `X` 默认最小化到系统托盘，旧进程仍在后台运行。
-- **解决方式**：在任务栏右下角托盘找到 DSH 图标，右键选择【退出】，然后重新打开 DSH 即可。
+<details>
+<summary><b>Q1: 安装后未授权时，模型列表中为什么看不到 Antigravity？</b></summary>
+为了防止未认证状态下误触发调用异常，插件遵循安全规范：只有在通过官方 OAuth 授权连接后，才会向 DSH 模型下拉列表注入可用模型。
+</details>
 
-### Q2：为什么未授权时在模型列表中看不到 Antigravity？
-- **原因**：为避免未登录时请求报错，插件只在完成 Google 授权后才会向聊天列表注入可用模型。
+<details>
+<summary><b>Q2: 插件更新后，DSH 如何加载最新代码？</b></summary>
+由于桌面端客户端在后台持有服务进程，更新或热链接后，只需将 DeepSeek Harness 客户端窗口按 <code>Ctrl+R</code> 重载，或彻底退出后重新打开即可。
+</details>
 
-### Q3：支持哪些操作系统？
-- 支持 Windows (x64 / arm64)、macOS (Apple Silicon / Intel)、Linux (x64 / arm64)。启动时会自动识别平台并下载对应二进制文件。
-
----
-
-## 项目结构
-
-```
-dsh-plugin-antigravity-acp/
-├── cordis.patch.yml       # DSH bundle patch 规范声明
-├── dsh/
-│   └── client.js          # DSH 前端扩展（向设置页与输入框底栏注入 UI）
-├── src/
-│   ├── index.ts           # 插件服务入口、LlmAdapter 注册、Web 路由与自愈状态机
-│   ├── bootstrapper.ts    # 官方二进制跨平台下载与 SHA256 校验
-│   ├── auth.ts            # OAuth 凭据管理、本地存储与 Token 刷新
-│   ├── acp-client.ts      # @agentclientprotocol/sdk 双向通信与流式处理
-│   ├── quota-service.ts   # Google 账号配额与 Tier 状态查询
-│   ├── session-manager.ts # 会话生命周期、真实提问提取与上下文绑定
-│   ├── event-mapper.ts    # ACP 协议事件转 DSH 流式事件
-│   └── runtime-manifest.json # 官方下载源与哈希列表
-├── dist/                  # 预编译产物（包含在仓库中，无需本地编译）
-├── package.json
-├── README.md              # 中文说明文档（默认）
-└── README_en.md           # 英文说明文档
-```
+<details>
+<summary><b>Q3: 配额显示中的 5 小时滑动窗口是什么含义？</b></summary>
+Google Antigravity 使用独特的 5-Hour Rolling Window 配额策略，而非传统的日结算。当消耗达到阈值时，会在窗口后延时平滑恢复。悬停底栏胶囊即可查看精确的重置倒计时。
+</details>
 
 ---
 
-## 参与贡献
+## 📄 更新历史与开源协议
 
-欢迎提交 Issue 和 Pull Request：
-- 项目仓库：[GitHub Repository](https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp)
-- 问题反馈：[Issues Tracker](https://github.com/Lovexiaoxiaowo/dsh-plugin-antigravity-acp/issues)
-
----
-
-## 开源协议
-
-本项目采用 [MIT License](LICENSE) 协议。
+- **版本历史**：关于各阶段的详细功能升级，请参阅 [CHANGELOG.md](CHANGELOG.md)。
+- **开源协议**：本项目基于 [MIT License](LICENSE) 协议开源。
